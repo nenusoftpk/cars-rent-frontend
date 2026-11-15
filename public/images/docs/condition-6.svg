@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200"><rect width="320" height="200" rx="12" fill="#e8eef8"/><g transform="translate(40 30) scale(.6)"><defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset=".35" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".22"/></linearGradient></defs>
+<g >
+<ellipse cx="200" cy="170" rx="165" ry="9" fill="#0b1c44" opacity=".16"/>
+<circle cx="102" cy="150" r="31" fill="#0c1220"/><circle cx="298" cy="150" r="31" fill="#0c1220"/>
+<path d="M24 142 C24 128 30 120 46 116 L96 104 C112 98 126 80 150 66 C160 60 176 56 196 56 L232 56 C256 56 272 64 288 84 L304 102 C338 106 366 112 374 130 L376 146 C376 150 372 152 368 152 L32 152 C28 152 24 148 24 142 Z" fill="#cfd5de"/><path d="M24 142 C24 128 30 120 46 116 L96 104 C112 98 126 80 150 66 C160 60 176 56 196 56 L232 56 C256 56 272 64 288 84 L304 102 C338 106 366 112 374 130 L376 146 C376 150 372 152 368 152 L32 152 C28 152 24 148 24 142 Z" fill="url(#g)"/>
+<path d="M154 74 C164 68 178 64 196 64 L230 64 C246 64 258 70 270 86 L282 100 L128 100 C138 90 146 80 154 74 Z" fill="#1c2a44"/><path d="M154 74 C164 68 178 64 196 64 L230 64 C246 64 258 70 270 86 L282 100 L128 100 C138 90 146 80 154 74 Z" fill="#9fc3ee" opacity=".35"/>
+<path d="M214 64 L214 100" stroke="#cfd5de" stroke-width="5"/>
+<rect x="24" y="124" width="8" height="14" rx="3" fill="#e11d48"/><path d="M364 118 L376 126 L366 132Z" fill="#fff7c2"/>
+<rect x="212" y="112" width="26" height="4" rx="2" fill="#000" opacity=".25"/>
+<g><circle cx="102" cy="150" r="26" fill="#151a22"/><circle cx="102" cy="150" r="14" fill="#cfd6df"/><circle cx="102" cy="150" r="4.5" fill="#6b7686"/>
+<circle cx="298" cy="150" r="26" fill="#151a22"/><circle cx="298" cy="150" r="14" fill="#cfd6df"/><circle cx="298" cy="150" r="4.5" fill="#6b7686"/></g></g></g><rect x="0" y="168" width="320" height="32" fill="#0b1c44" opacity=".85"/><text x="160" y="189" font-size="13" font-weight="700" text-anchor="middle" fill="#fff" font-family="Arial">Meter reading</text></svg>
