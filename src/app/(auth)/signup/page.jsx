@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -26,7 +25,9 @@ import {
 } from "lucide-react";
 
 import AuthLayout, {
+  AuthActions,
   AuthField,
+  DemoVideosButton,
   PasswordToggle,
 } from "@/components/layout/AuthLayout";
 import Form from "@/components/forms/Form";
@@ -147,7 +148,7 @@ function ImageUpload({
   const isAvatar = variant === "avatar";
 
   return (
-    <div className="flex flex-wrap items-center gap-4 rounded-xl border border-dashed border-line bg-soft p-3 sm:flex-nowrap">
+    <div className="flex flex-wrap items-center gap-4 rounded-xl border border-dashed border-[#9fc0ee] bg-white/70 p-3 sm:flex-nowrap">
       <input
         ref={inputRef}
         type="file"
@@ -159,7 +160,7 @@ function ImageUpload({
       />
 
       <div
-        className={`flex shrink-0 items-center justify-center overflow-hidden border border-line bg-white ${
+        className={`flex shrink-0 items-center justify-center overflow-hidden border border-[#c3d6f4] bg-white ${
           isAvatar ? "h-16 w-16 rounded-full" : "h-16 w-20 rounded-xl"
         }`}
       >
@@ -259,7 +260,7 @@ function PasswordRequirements({ password = "" }) {
     passedCount === PASSWORD_RULES.length && password.length <= 128;
 
   return (
-    <div className="rounded-xl border border-line bg-soft p-4">
+    <div className="rounded-xl border border-[#c3d6f4] bg-white/70 p-4">
       <div className="mb-3 flex items-center justify-between gap-2">
         <p className="text-[13px] font-semibold text-heading">
           Password requirements
@@ -285,7 +286,7 @@ function PasswordRequirements({ password = "" }) {
                 ? allPassed
                   ? "bg-success"
                   : "bg-primary"
-                : "bg-line"
+                : "bg-[#c3d6f4]"
             }`}
           />
         ))}
@@ -516,25 +517,15 @@ export default function SignupPage() {
 
   return (
     <AuthLayout
-      eyebrow="Create your workspace"
-      title="Create your business account"
-      subtitle="Set up your rental business in a few minutes."
-      footer={
-        <>
-          Already have an account?{" "}
-          <Link
-            href="/login"
-            className="font-semibold text-primary hover:underline"
-          >
-            Sign in
-          </Link>
-        </>
-      }
+      mode="signup"
+      wide
+      title="Create your account"
+      subtitle="Register as Admin and start your 3-day free trial."
     >
       {serverError && (
         <div
           role="alert"
-          className="mb-6 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-red-700"
+          className="mb-4 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-3 text-red-700"
         >
           <AlertCircle size={19} className="mt-0.5 shrink-0" />
 
@@ -545,13 +536,13 @@ export default function SignupPage() {
         </div>
       )}
 
-      {/* No inner scroll container: the right panel of AuthLayout scrolls. */}
-      <Form form={form} onSubmit={onSubmit} className="space-y-8">
+      {/* No inner scroll container: the card body in AuthLayout scrolls. */}
+      <Form form={form} onSubmit={onSubmit} className="space-y-4">
         {/* ====================================
             BUSINESS INFORMATION
         ==================================== */}
 
-        <section className="space-y-5">
+        <section className="space-y-4 rounded-2xl border border-white/80 bg-white/60 p-4 shadow-sm">
           <SectionHeader
             icon={Building2}
             title="Business information"
@@ -571,7 +562,7 @@ export default function SignupPage() {
             OWNER INFORMATION
         ==================================== */}
 
-        <section className="space-y-5 border-t border-line pt-8">
+        <section className="space-y-4 rounded-2xl border border-white/80 bg-white/60 p-4 shadow-sm">
           <SectionHeader
             icon={UserRound}
             title="Owner information"
@@ -587,7 +578,7 @@ export default function SignupPage() {
             variant="avatar"
           />
 
-          <div className="grid grid-cols-1 gap-x-5 gap-y-5 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-2">
             <FormInput
               name="name"
               label="Owner Full Name"
@@ -619,14 +610,14 @@ export default function SignupPage() {
             ACCOUNT SECURITY
         ==================================== */}
 
-        <section className="space-y-5 border-t border-line pt-8">
+        <section className="space-y-4 rounded-2xl border border-white/80 bg-white/60 p-4 shadow-sm">
           <SectionHeader
             icon={LockKeyhole}
             title="Account security"
             description="Create a secure password for your account."
           />
 
-          <div className="grid grid-cols-1 gap-x-5 gap-y-5 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-2">
             <PasswordField
               name="password"
               label="Password"
@@ -665,7 +656,7 @@ export default function SignupPage() {
             ADMIN NOTE
         ==================================== */}
 
-        <div className="flex items-start gap-2 rounded-xl border border-line p-3">
+        <div className="flex items-start gap-2 rounded-xl border border-[#c3d6f4] bg-white/60 p-3">
           <ShieldCheck size={17} className="mt-0.5 shrink-0 text-primary" />
 
           <p className="text-xs leading-5 text-muted">
@@ -675,16 +666,15 @@ export default function SignupPage() {
         </div>
 
         {/* ====================================
-            STICKY SUBMIT BAR
-            Sticks to the bottom of the scrolling right panel
-            so the button is always reachable.
+            STICKY ACTIONS
+            Pinned to the bottom of the scrolling card.
         ==================================== */}
 
-        <div className="sticky bottom-0 z-10 -mx-1 border-t border-line bg-white/95 px-1 py-4 backdrop-blur supports-[backdrop-filter]:bg-white/85">
+        <AuthActions sticky>
           <button
             type="submit"
             disabled={submitting || !ready || Boolean(token)}
-            className="btn btn-primary btn-lg w-full"
+            className="btn btn-primary h-11 w-full text-[15px] shadow-md shadow-primary/25"
           >
             {submitting ? (
               <>
@@ -698,7 +688,9 @@ export default function SignupPage() {
               </>
             )}
           </button>
-        </div>
+
+          <DemoVideosButton />
+        </AuthActions>
       </Form>
     </AuthLayout>
   );

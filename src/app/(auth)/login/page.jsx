@@ -6,16 +6,13 @@ import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
-import {
-  AlertCircle,
-  ArrowRight,
-  Loader2,
-  Lock,
-  Mail,
-} from "lucide-react";
+import { AlertCircle, ArrowRight, Loader2, Lock, Mail } from "lucide-react";
 
 import AuthLayout, {
+  AppDownloadButtons,
+  AuthActions,
   AuthField,
+  DemoVideosButton,
   PasswordToggle,
 } from "@/components/layout/AuthLayout";
 import Form from "@/components/forms/Form";
@@ -26,18 +23,47 @@ import { useLoginMutation } from "@/redux/api/authApi";
 import { errorMessage } from "@/redux/api/baseApi";
 import { useAuth } from "@/hooks/useAuth";
 
+// ======================================================
+// REMEMBER ME (remembers the email address on this device)
+// ======================================================
+
+const REMEMBER_KEY = "rent-a-car:remembered-email";
+
+function readRememberedEmail() {
+  try {
+    return window.localStorage.getItem(REMEMBER_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+function saveRememberedEmail(email) {
+  try {
+    window.localStorage.setItem(REMEMBER_KEY, email);
+  } catch {
+    // Storage can be blocked (private mode). Login still works.
+  }
+}
+
+function clearRememberedEmail() {
+  try {
+    window.localStorage.removeItem(REMEMBER_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+// ======================================================
+// LOGIN PAGE
+// ======================================================
+
 export default function LoginPage() {
   const router = useRouter();
   const { token, ready, expired, isAuthenticated, role } = useAuth();
 
-  console.log("REDUX AUTH STATE:", {
-    role,
-    ready,
-    isAuthenticated,
-  });
-
   const [login, { isLoading }] = useLoginMutation();
   const [showPassword, setShowPassword] = useState(false);
+  const [rememberMe, setRememberMe] = useState(false);
   const [serverError, setServerError] = useState("");
 
   const form = useForm({
@@ -47,6 +73,18 @@ export default function LoginPage() {
       password: "",
     },
   });
+
+  const { setValue } = form;
+
+  // Pre-fill the email if the user ticked "Remember me" last time.
+  useEffect(() => {
+    const saved = readRememberedEmail();
+
+    if (saved) {
+      setValue("email", saved, { shouldDirty: false });
+      setRememberMe(true);
+    }
+  }, [setValue]);
 
   useEffect(() => {
     if (!ready || !isAuthenticated) return;
@@ -69,19 +107,26 @@ export default function LoginPage() {
 
     setServerError("");
 
+    const email = values.email.trim().toLowerCase();
+
     try {
       const result = await login({
-        email: values.email.trim().toLowerCase(),
+        email,
         password: values.password,
       }).unwrap();
-      console.log("LOGIN API RESPONSE:", result);
-      console.log("LOGIN USER ROLE:", result?.user?.role);
 
       if (!result?.token || !result?.user) {
         const message = "Invalid login response from the server.";
         setServerError(message);
         toast.error(message);
         return;
+      }
+
+      // Only update the remembered email after a successful login.
+      if (rememberMe) {
+        saveRememberedEmail(email);
+      } else {
+        clearRememberedEmail();
       }
 
       const firstName = result.user.name?.split(" ")[0] || "User";
@@ -98,10 +143,7 @@ export default function LoginPage() {
         toast.error("Your account role is not supported.");
       }
     } catch (error) {
-      const message = errorMessage(
-        error,
-        "Login failed. Please try again."
-      );
+      const message = errorMessage(error, "Login failed. Please try again.");
 
       setServerError(message);
       toast.error(message);
@@ -110,12 +152,12 @@ export default function LoginPage() {
 
   return (
     <AuthLayout
-      eyebrow="Your rental workspace"
-      title="Welcome back"
-      subtitle="Sign in to manage your rental business."
+      mode="login"
+      title="Welcome Back"
+      subtitle="Sign in to your account."
       footer={
         <>
-          New to Rent a Car?{" "}
+          Don&apos;t have an account yet?{" "}
           <Link
             href="/signup"
             className="font-semibold text-primary hover:underline"
@@ -128,18 +170,18 @@ export default function LoginPage() {
       {serverError && (
         <div
           role="alert"
-          className="mb-5 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-red-700"
+          className="mb-4 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-3 text-red-700"
         >
           <AlertCircle size={18} className="mt-0.5 shrink-0" />
 
           <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold">Sign in unsuccessful</p>
-            <p className="mt-1 text-xs leading-5">{serverError}</p>
+            <p className="mt-0.5 text-xs leading-5">{serverError}</p>
           </div>
         </div>
       )}
 
-      <Form form={form} onSubmit={onSubmit} className="space-y-5">
+      <Form form={form} onSubmit={onSubmit} className="space-y-4">
         <AuthField icon={Mail}>
           <FormInput
             name="email"
@@ -155,19 +197,10 @@ export default function LoginPage() {
         <AuthField
           icon={Lock}
           trailing={
-            <>
-              <Link
-                href="/forgot-password"
-                className="absolute right-0 top-0 text-[13px] font-semibold leading-5 text-primary hover:underline"
-              >
-                Forgot password?
-              </Link>
-
-              <PasswordToggle
-                visible={showPassword}
-                onToggle={() => setShowPassword((prev) => !prev)}
-              />
-            </>
+            <PasswordToggle
+              visible={showPassword}
+              onToggle={() => setShowPassword((prev) => !prev)}
+            />
           }
         >
           <FormInput
@@ -181,9 +214,28 @@ export default function LoginPage() {
           />
         </AuthField>
 
+        <div className="flex items-center justify-between gap-3">
+          <label className="inline-flex cursor-pointer select-none items-center gap-2 text-[13px] font-medium text-heading">
+            <input
+              type="checkbox"
+              checked={rememberMe}
+              onChange={(event) => setRememberMe(event.target.checked)}
+              className="h-4 w-4 cursor-pointer rounded border-slate-300 accent-primary"
+            />
+            Remember me
+          </label>
+
+          <Link
+            href="/forgot-password"
+            className="text-[13px] font-semibold text-primary hover:underline"
+          >
+            Forgot password?
+          </Link>
+        </div>
+
         <button
           type="submit"
-          className="btn btn-primary btn-lg w-full"
+          className="btn btn-primary h-11 w-full text-[15px] shadow-md shadow-primary/25"
           disabled={isLoading || !ready || !!token}
         >
           {isLoading ? (
@@ -193,12 +245,19 @@ export default function LoginPage() {
             </>
           ) : (
             <>
-              Sign in to Rent a Car
+              Login
               <ArrowRight size={18} />
             </>
           )}
         </button>
       </Form>
+
+      <div className="mt-3">
+        <AuthActions>
+          <DemoVideosButton />
+          <AppDownloadButtons />
+        </AuthActions>
+      </div>
     </AuthLayout>
   );
 }
