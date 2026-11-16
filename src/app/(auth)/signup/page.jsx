@@ -518,7 +518,6 @@ export default function SignupPage() {
   return (
     <AuthLayout
       mode="signup"
-      wide
       title="Create your account"
       subtitle="Register as Admin and start your 3-day free trial."
     >
@@ -578,7 +577,7 @@ export default function SignupPage() {
             variant="avatar"
           />
 
-          <div className="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4">
             <FormInput
               name="name"
               label="Owner Full Name"
@@ -598,7 +597,7 @@ export default function SignupPage() {
 
             <PhoneInput name="phone" required />
 
-            <p className="flex items-start gap-2 text-xs leading-5 text-muted sm:self-end sm:pb-3">
+            <p className="flex items-start gap-2 text-xs leading-5 text-muted">
               <Mail size={14} className="mt-0.5 shrink-0" />
               Your email address will be used to log in and recover your
               account.
@@ -617,7 +616,7 @@ export default function SignupPage() {
             description="Create a secure password for your account."
           />
 
-          <div className="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4">
             <PasswordField
               name="password"
               label="Password"
@@ -674,7 +673,7 @@ export default function SignupPage() {
           <button
             type="submit"
             disabled={submitting || !ready || Boolean(token)}
-            className="btn btn-primary h-11 w-full text-[15px] shadow-md shadow-primary/25"
+            className="btn btn-primary h-11 w-full text-[15px] shadow-md shadow-primary/25 [@media(max-height:720px)]:h-10"
           >
             {submitting ? (
               <>

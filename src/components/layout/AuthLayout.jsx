@@ -83,7 +83,7 @@ export function DemoVideosButton() {
   return (
     <Link
       href={DEMO_VIDEOS_HREF}
-      className="btn h-11 w-full bg-[#e62117] text-[15px] text-white shadow-md shadow-red-600/25 hover:bg-[#c91b12]"
+      className="btn h-11 w-full bg-[#e62117] text-[15px] text-white shadow-md shadow-red-600/25 hover:bg-[#c91b12] [@media(max-height:720px)]:h-10"
     >
       <YouTubeIcon />
       Demo Videos
@@ -97,7 +97,7 @@ export function AppDownloadButtons() {
       <a
         href={MOBILE_APP_HREF}
         download
-        className="btn btn-outline h-11 border-primary/40 bg-white/80"
+        className="btn btn-outline h-11 border-primary/40 bg-white/80 [@media(max-height:720px)]:h-10"
       >
         <Smartphone size={16} />
         Mobile App
@@ -106,7 +106,7 @@ export function AppDownloadButtons() {
       <a
         href={WINDOWS_APP_HREF}
         download
-        className="btn btn-outline h-11 border-primary/40 bg-white/80"
+        className="btn btn-outline h-11 border-primary/40 bg-white/80 [@media(max-height:720px)]:h-10"
       >
         <Monitor size={16} />
         Windows App
@@ -125,7 +125,7 @@ export function AuthActions({ children, sticky = false }) {
     <div
       className={
         sticky
-          ? "sticky bottom-0 z-10 -mx-5 -mb-5 mt-5 space-y-3 border-t border-[#c3d6f4] bg-[#e4efff]/95 px-5 py-4 backdrop-blur sm:-mx-6 sm:-mb-6 sm:px-6"
+          ? "sticky bottom-0 z-10 -mx-5 mt-4 space-y-3 border-t border-[#c3d6f4] bg-[#e4efff]/95 px-5 py-3 backdrop-blur sm:-mx-6 sm:px-6"
           : "space-y-3"
       }
     >
@@ -140,7 +140,7 @@ export function AuthActions({ children, sticky = false }) {
 
 function AuthTabs({ mode }) {
   const base =
-    "inline-flex h-10 min-w-[104px] items-center justify-center rounded-full px-6 text-sm font-semibold transition-colors";
+    "inline-flex h-10 min-w-[88px] items-center justify-center rounded-full px-5 text-sm font-semibold transition-colors";
   const active =
     "bg-gradient-to-b from-[#2f84ff] to-primary text-white shadow-md shadow-primary/30";
   const idle = "text-slate-600 hover:text-primary";
@@ -148,7 +148,7 @@ function AuthTabs({ mode }) {
   return (
     <nav
       aria-label="Account"
-      className="mx-auto flex w-fit items-center gap-1 rounded-full border border-[#c3d6f4] bg-white/70 p-1 shadow-sm"
+      className="flex w-fit items-center gap-1 rounded-full border border-[#c3d6f4] bg-white/70 p-1 shadow-sm sm:absolute sm:left-1/2 sm:-translate-x-1/2"
     >
       <Link
         href="/login"
@@ -170,6 +170,30 @@ function AuthTabs({ mode }) {
 }
 
 // ======================================================
+// SMALL LOGO (top-left of the card)
+// The logo sits on a navy chip so it stays readable on the
+// light-blue card even if logo.svg has white lettering.
+// ======================================================
+
+function CardLogo() {
+  return (
+    <Link
+      href="/login"
+      aria-label="Rent a Car Management System"
+      className="grid shrink-0 place-items-center rounded-xl bg-sidebar px-2 py-1.5 shadow-sm max-[359px]:hidden"
+    >
+      <SmartImage
+        src={LOGO_SRC}
+        alt="Rent a Car Management System"
+        width={64}
+        height={27}
+        priority
+      />
+    </Link>
+  );
+}
+
+// ======================================================
 // LAYOUT
 //
 // The background image fills the whole screen. The form
@@ -181,13 +205,11 @@ function AuthTabs({ mode }) {
 //
 // Props:
 //   mode   "login" | "signup"  (highlights the active tab)
-//   wide   wider card for the signup form
 //   footer small text strip pinned to the bottom of the card
 // ======================================================
 
 export default function AuthLayout({
   mode = "login",
-  wide = false,
   title,
   subtitle,
   children,
@@ -213,17 +235,6 @@ export default function AuthLayout({
 
       {/* ================= CONTENT ================= */}
       <div className="mx-auto flex h-dvh w-full max-w-[1920px] flex-col items-center justify-center gap-4 px-4 py-4 sm:px-6 lg:flex-row lg:justify-end lg:px-10 xl:pr-[7vw]">
-        {/* Logo (mobile + tablet; on desktop it is part of the background) */}
-        <div className="shrink-0 lg:hidden">
-          <SmartImage
-            src={LOGO_SRC}
-            alt="Rent a Car Management System"
-            width={150}
-            height={63}
-            priority
-          />
-        </div>
-
         <section
           className={[
             "auth-panel flex max-h-full min-h-0 w-full flex-col overflow-hidden",
@@ -231,18 +242,19 @@ export default function AuthLayout({
             // light-blue inputs that match the card
             "[&_.input]:border-[#c3d6f4] [&_.input]:bg-[#d9e8fd]",
             "[&_.input:focus]:bg-white",
-            wide ? "max-w-[600px]" : "max-w-[460px]",
+            "max-w-[460px]",
           ].join(" ")}
         >
-          {/* Tabs */}
-          <header className="shrink-0 border-b border-[#c3d6f4] bg-white/40 px-5 py-4 sm:px-6">
+          {/* Logo (left) + tabs (centre) */}
+          <header className="relative flex shrink-0 items-center justify-between border-b border-[#c3d6f4] bg-white/40 px-5 py-3 sm:justify-start sm:px-6 [@media(max-height:720px)]:py-2.5">
+            <CardLogo />
             <AuthTabs mode={mode} />
           </header>
 
           {/* Scrolling body */}
-          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-5 sm:px-6 sm:py-6">
-            <div className="mb-5 text-center">
-              <h1 className="text-3xl font-extrabold leading-tight tracking-tight text-heading">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pt-4 sm:px-6 sm:pt-5 [@media(max-height:720px)]:pt-3">
+            <div className="mb-4 text-center [@media(max-height:720px)]:mb-3">
+              <h1 className="text-3xl font-extrabold leading-tight tracking-tight text-heading [@media(max-height:720px)]:text-2xl">
                 {title}
               </h1>
 
@@ -257,7 +269,7 @@ export default function AuthLayout({
           </div>
 
           {footer && (
-            <div className="shrink-0 border-t border-[#c3d6f4] bg-white/40 px-5 py-3 text-center text-[13px] text-slate-600 sm:px-6">
+            <div className="shrink-0 border-t border-[#c3d6f4] bg-white/40 px-5 py-2.5 text-center text-[13px] text-slate-600 sm:px-6">
               {footer}
             </div>
           )}

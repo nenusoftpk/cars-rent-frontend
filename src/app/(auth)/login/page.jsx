@@ -181,7 +181,11 @@ export default function LoginPage() {
         </div>
       )}
 
-      <Form form={form} onSubmit={onSubmit} className="space-y-4">
+      <Form
+        form={form}
+        onSubmit={onSubmit}
+        className="space-y-4 [@media(max-height:720px)]:space-y-3"
+      >
         <AuthField icon={Mail}>
           <FormInput
             name="email"
@@ -235,7 +239,7 @@ export default function LoginPage() {
 
         <button
           type="submit"
-          className="btn btn-primary h-11 w-full text-[15px] shadow-md shadow-primary/25"
+          className="btn btn-primary h-11 w-full text-[15px] shadow-md shadow-primary/25 [@media(max-height:720px)]:h-10"
           disabled={isLoading || !ready || !!token}
         >
           {isLoading ? (
@@ -252,7 +256,7 @@ export default function LoginPage() {
         </button>
       </Form>
 
-      <div className="mt-3">
+      <div className="mt-3 pb-4 [@media(max-height:720px)]:pb-3">
         <AuthActions>
           <DemoVideosButton />
           <AppDownloadButtons />
