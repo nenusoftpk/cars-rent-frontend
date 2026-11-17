@@ -4,7 +4,7 @@ import ReduxProvider from '@/redux/provider';
 export const metadata = {
   title: 'Rent a Car Management System',
   description: 'Cars, customers, bookings, payments and reports for rent-a-car businesses.',
-  icons: { icon: '/favicon.svg' },
+  icons: { icon: '/favicon7.png' },
 };
 export const viewport = { width: 'device-width', initialScale: 1, themeColor: '#06172f' };
 

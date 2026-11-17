@@ -13,8 +13,8 @@ const LOGO_SRC = "/images/logo.svg";
 const BACKGROUND_SRC = "/images/cars/background-image.png";
 
 export const DEMO_VIDEOS_HREF = "/demo-videos";
-export const MOBILE_APP_HREF = "/downloads/rent-a-car.apk";
-export const WINDOWS_APP_HREF = "/downloads/rent-a-car-setup.exe";
+export const MOBILE_APP_HREF = "/downloads/cars_rent.apk";
+export const WINDOWS_APP_HREF = "/downloads/CarsRent-Setup-1.0.0.exe";
 
 // ======================================================
 // SHARED FIELD HELPERS (used by login + signup)

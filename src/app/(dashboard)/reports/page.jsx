@@ -1,6 +1,17 @@
+// PATH: src/app/reports/page.jsx
 'use client';
 
-import { FileBarChart } from 'lucide-react';
+import { useMemo } from 'react';
+import {
+  FileBarChart,
+  TrendingUp,
+  CalendarDays,
+  CreditCard,
+  Receipt,
+  Users,
+  Car,
+  UserCheck,
+} from 'lucide-react';
 
 import PageHeader from '@/components/layout/PageHeader';
 import PageContainer from '@/components/layout/PageContainer';
@@ -16,6 +27,8 @@ import DataTable from '@/components/tables/DataTable';
 import ExportButtons from '@/components/tables/ExportButtons';
 import CarSelector from '@/components/forms/CarSelector';
 import CustomerSelector from '@/components/forms/CustomerSelector';
+import NetworkError from '@/components/feedback/NetworkError';
+import EmptyState from '@/components/common/EmptyState';
 
 import { REPORTS, FLAT, totalsRow } from '@/features/reports/reportConfig';
 import { useGetReportQuery, reportApi } from '@/redux/api/reportApi';
@@ -25,7 +38,18 @@ import { useGetStaffOptionsQuery } from '@/redux/api/staffApi';
 import { useListParams } from '@/hooks/useListParams';
 import { useExportAll } from '@/hooks/useExportAll';
 import { useAuth } from '@/hooks/useAuth';
+import { formatPKR } from '@/lib/money';
 import { cn } from '@/lib/utils';
+
+const REPORT_ICONS = {
+  'income-expense': TrendingUp,
+  bookings: CalendarDays,
+  payments: CreditCard,
+  expenses: Receipt,
+  customers: Users,
+  'cars-status': Car,
+  drivers: UserCheck,
+};
 
 export default function ReportsPage() {
   const { can } = useAuth();
@@ -37,17 +61,31 @@ export default function ReportsPage() {
     hasFilters,
   } = useListParams({ report: 'cars-status' });
 
-  // Only show money reports when the user has financial permission
-  const allowed = FLAT.filter((r) => !r.money || can('financial:view'));
+  // Only show money reports when user has financial permission
+  const allowed = useMemo(
+    () => FLAT.filter((r) => !r.money || can('financial:view') || can('reports.view')),
+    [can]
+  );
+
   const cfg = allowed.find((r) => r.id === params.report) || allowed[0];
 
-  // Build the exact query the backend expects
-  const queryArgs = {
-    name: cfg?.id,
-    ...Object.fromEntries(
-      Object.entries(params).filter(([key]) => key !== 'report')
-    ),
-  };
+  // Build clean query args for the backend
+  const queryArgs = useMemo(() => {
+    const args = {
+      name: cfg?.id,
+      ...Object.fromEntries(
+        Object.entries(params).filter(
+          ([key]) => key !== 'report' && key !== 'page' && key !== 'pageSize'
+        )
+      ),
+    };
+
+    // Keep pagination
+    if (params.page) args.page = params.page;
+    if (params.pageSize) args.pageSize = params.pageSize || params.limit;
+
+    return args;
+  }, [cfg?.id, params]);
 
   const {
     data,
@@ -57,73 +95,89 @@ export default function ReportsPage() {
     refetch,
   } = useGetReportQuery(queryArgs, {
     skip: !cfg?.id,
+    refetchOnMountOrArgChange: true,
   });
 
   const exportAll = useExportAll(reportApi.endpoints.getReport, queryArgs);
 
-  // Lazy-load filter options only when needed
-  const { data: drivers } = useGetDriversQuery(
+  // Lazy-load filter options
+  const { data: driversData } = useGetDriversQuery(
     { pageSize: 100 },
     { skip: !cfg?.filters?.includes('driver') }
   );
 
-  const { data: staff } = useGetStaffOptionsQuery(undefined, {
+  const { data: staffData } = useGetStaffOptionsQuery(undefined, {
     skip: !cfg?.filters?.includes('staff'),
   });
 
   const hasFilter = (key) => cfg?.filters?.includes(key);
 
-  // Safe staff options (handles different response shapes)
-  const staffOptions = Array.isArray(staff)
-    ? staff
-    : Array.isArray(staff?.items)
-      ? staff.items
-      : Array.isArray(staff?.data)
-        ? staff.data
+  const drivers = Array.isArray(driversData?.items)
+    ? driversData.items
+    : Array.isArray(driversData)
+      ? driversData
+      : [];
+
+  const staffOptions = Array.isArray(staffData)
+    ? staffData
+    : Array.isArray(staffData?.items)
+      ? staffData.items
+      : Array.isArray(staffData?.data)
+        ? staffData.data
         : [];
 
-  // --------------------------------------------------
-  // Columns – map reportConfig definition → DataTable
-  // --------------------------------------------------
-  const columns = (cfg?.cols || []).map((col) => ({
-    key: col.key,
-    header: col.header,
-    sortable: col.sortable,
-    align: col.align,
-    render: (row) => {
-      if (col.kind === 'status') {
-        return <StatusBadge status={row[col.key]} />;
-      }
-      // Support nested paths (e.g. customer.name)
-      const value = col.key.includes('.')
-        ? col.key.split('.').reduce((acc, k) => acc?.[k], row)
-        : row[col.key];
+  // ---------- Columns ----------
+  const columns = useMemo(() => {
+    return (cfg?.cols || []).map((col) => ({
+      key: col.key,
+      header: col.header,
+      sortable: col.sortable,
+      align: col.align,
+      render: (row) => {
+        if (col.kind === 'status') {
+          return <StatusBadge status={row[col.key]} />;
+        }
 
-      return col.fmt ? col.fmt(value) : value ?? '—';
-    },
-  }));
+        // Support nested keys (customer.name, car.numberPlate, etc.)
+        const value = col.key.includes('.')
+          ? col.key.split('.').reduce((acc, k) => acc?.[k], row)
+          : row[col.key];
 
-  // Export columns (plain values)
-  const exportColumns = (cfg?.cols || []).map((col) => ({
-    header: col.header,
-    value: (row) => {
-      const value = col.key.includes('.')
-        ? col.key.split('.').reduce((acc, k) => acc?.[k], row)
-        : row[col.key];
-      return col.fmt ? col.fmt(value) : value ?? '';
-    },
-    right: col.align === 'right',
-  }));
+        if (col.fmt) return col.fmt(value);
+        if (value == null || value === '') return '—';
+        return value;
+      },
+    }));
+  }, [cfg]);
 
-  // Footer totals row (backend returns `totals`)
-  const totals = data?.totals;
-  const footer =
-    totals && Object.keys(totals).length > 0 ? (
-      <tr>
+  // Export columns (plain text)
+  const exportColumns = useMemo(() => {
+    return (cfg?.cols || []).map((col) => ({
+      header: col.header,
+      value: (row) => {
+        const value = col.key.includes('.')
+          ? col.key.split('.').reduce((acc, k) => acc?.[k], row)
+          : row[col.key];
+        return col.fmt ? col.fmt(value) : value ?? '';
+      },
+      right: col.align === 'right',
+    }));
+  }, [cfg]);
+
+  // Footer totals
+  const footer = useMemo(() => {
+    const totals = data?.totals || data?.summary;
+    if (!totals || Object.keys(totals).length === 0) return null;
+
+    return (
+      <tr className="bg-soft font-semibold">
         {(cfg?.cols || []).map((col, index) => (
           <td
             key={col.key}
-            className={col.align === 'right' ? 'text-right' : ''}
+            className={cn(
+              'px-3 py-3 border-t border-line',
+              col.align === 'right' && 'text-right'
+            )}
           >
             {index === 0
               ? 'Total'
@@ -135,12 +189,17 @@ export default function ReportsPage() {
           </td>
         ))}
       </tr>
-    ) : null;
+    );
+  }, [data, cfg]);
 
-  // Switch report (reset other filters)
+  // Special handling for Income & Expense (mostly summary)
+  const isSummaryOnly =
+    cfg?.id === 'income-expense' ||
+    (data?.items?.length === 0 && data?.summary);
+
   const chooseReport = (id) => {
     reset();
-    // small delay so reset finishes before setting the new report
+    // small delay so reset finishes cleanly
     setTimeout(() => setParams({ report: id }), 0);
   };
 
@@ -152,60 +211,91 @@ export default function ReportsPage() {
       />
 
       <PageContainer>
-        <div className="grid gap-4 lg:grid-cols-[250px_1fr] items-start">
-          {/* ---------- Left navigation ---------- */}
+        <div className="grid gap-4 lg:grid-cols-[240px_1fr] items-start">
+          {/* ========== LEFT NAV ========== */}
           <nav
             aria-label="Reports"
-            className="card p-2 lg:sticky lg:top-20"
+            className="card p-2 lg:sticky lg:top-20 overflow-hidden"
           >
-            {REPORTS.map((group) => {
-              const items = group.items.filter((item) =>
-                allowed.includes(item)
-              );
-              if (!items.length) return null;
+            {/* Mobile: horizontal scroll chips */}
+            <div className="lg:hidden flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
+              {allowed.map((item) => {
+                const Icon = REPORT_ICONS[item.id] || FileBarChart;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => chooseReport(item.id)}
+                    className={cn(
+                      'flex items-center gap-2 shrink-0 rounded-xl px-3.5 py-2 text-sm font-semibold whitespace-nowrap transition',
+                      cfg?.id === item.id
+                        ? 'bg-primary text-white shadow-sm'
+                        : 'bg-soft text-heading hover:bg-line'
+                    )}
+                  >
+                    <Icon size={16} />
+                    {item.label}
+                  </button>
+                );
+              })}
+            </div>
 
-              return (
-                <div key={group.group} className="mb-1">
-                  <p className="px-3 pt-2 pb-1 text-[11px] font-bold uppercase tracking-wide text-muted">
-                    {group.group}
-                  </p>
-                  <div className="flex lg:block gap-1 overflow-x-auto">
-                    {items.map((item) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        onClick={() => chooseReport(item.id)}
-                        aria-current={cfg?.id === item.id ? 'page' : undefined}
-                        className={cn(
-                          'w-full text-left whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium',
-                          cfg?.id === item.id
-                            ? 'bg-primary text-white'
-                            : 'hover:bg-soft'
-                        )}
-                      >
-                        {item.label}
-                      </button>
-                    ))}
+            {/* Desktop: vertical groups */}
+            <div className="hidden lg:block">
+              {REPORTS.map((group) => {
+                const items = group.items.filter((item) =>
+                  allowed.some((a) => a.id === item.id)
+                );
+                if (!items.length) return null;
+
+                return (
+                  <div key={group.group} className="mb-2">
+                    <p className="px-3 pt-2 pb-1 text-[11px] font-bold uppercase tracking-wide text-muted">
+                      {group.group}
+                    </p>
+                    <div className="space-y-0.5">
+                      {items.map((item) => {
+                        const Icon = REPORT_ICONS[item.id] || FileBarChart;
+                        return (
+                          <button
+                            key={item.id}
+                            type="button"
+                            onClick={() => chooseReport(item.id)}
+                            aria-current={cfg?.id === item.id ? 'page' : undefined}
+                            className={cn(
+                              'w-full flex items-center gap-2.5 text-left rounded-lg px-3 py-2.5 text-sm font-medium transition',
+                              cfg?.id === item.id
+                                ? 'bg-primary text-white'
+                                : 'hover:bg-soft text-heading'
+                            )}
+                          >
+                            <Icon size={16} className="shrink-0 opacity-80" />
+                            <span className="truncate">{item.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
 
-            {!can('financial:view') && (
-              <p className="text-xs text-muted p-3">
-                Money reports are available to the owner.
-              </p>
-            )}
+              {!can('financial:view') && (
+                <p className="text-xs text-muted p-3 leading-relaxed">
+                  Money reports (Income, Payments, Expenses) are available to the owner.
+                </p>
+              )}
+            </div>
           </nav>
 
-          {/* ---------- Main content ---------- */}
+          {/* ========== MAIN CONTENT ========== */}
           <div className="space-y-4 min-w-0">
+            {/* Filters */}
             <FilterPanel
               onReset={reset}
-              cols="sm:grid-cols-2 xl:grid-cols-3"
+              cols="sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4"
             >
-              {/* Search – always available */}
-              <div>
+              {/* Search */}
+              <div className="min-w-0">
                 <label className="label">Search</label>
                 <SearchInput
                   value={params.search || ''}
@@ -216,13 +306,21 @@ export default function ReportsPage() {
 
               {/* Date range */}
               {hasFilter('date') && (
-                <DateRangeFilter
-                  from={params.from || ''}
-                  to={params.to || ''}
-                  onChange={(range) => setParams(range)}
-                  fromLabel={`From (${cfg?.dateLabel || 'date'})`}
-                  toLabel={`To (${cfg?.dateLabel || 'date'})`}
-                />
+                <div className="min-w-0 sm:col-span-2 xl:col-span-1">
+                  <DateRangeFilter
+                    from={params.from || ''}
+                    to={params.to || ''}
+                    onChange={(range) => {
+                      // Keep both values stable
+                      setParams({
+                        from: range.from ?? params.from ?? '',
+                        to: range.to ?? params.to ?? '',
+                      });
+                    }}
+                    fromLabel={`From (${cfg?.dateLabel || 'date'})`}
+                    toLabel={`To (${cfg?.dateLabel || 'date'})`}
+                  />
+                </div>
               )}
 
               {/* Car */}
@@ -262,8 +360,8 @@ export default function ReportsPage() {
                   label="Driver"
                   value={params.driverId || ''}
                   onChange={(value) => setParams({ driverId: value })}
-                  options={(drivers?.items || []).map((d) => ({
-                    value: d.id,
+                  options={drivers.map((d) => ({
+                    value: d.id || d._id,
                     label: d.name,
                   }))}
                   allLabel="All Drivers"
@@ -277,7 +375,7 @@ export default function ReportsPage() {
                   value={params.staffId || ''}
                   onChange={(value) => setParams({ staffId: value })}
                   options={staffOptions.map((s) => ({
-                    value: s.id,
+                    value: s.id || s._id,
                     label: s.name,
                   }))}
                   allLabel="All Employees"
@@ -285,6 +383,7 @@ export default function ReportsPage() {
               )}
             </FilterPanel>
 
+            {/* Report Card */}
             <SectionCard
               title={cfg?.label || 'Report'}
               subtitle={
@@ -300,34 +399,80 @@ export default function ReportsPage() {
                   title={cfg?.label}
                   subtitle={
                     params.from
-                      ? `${params.from} to ${params.to || 'today'}`
-                      : ''
+                      ? `${params.from} → ${params.to || 'today'}`
+                      : 'All time'
                   }
-                  filename={cfg?.id}
+                  filename={cfg?.id || 'report'}
                   totals={(rows) =>
-                    totalsRow(cfg, rows?.totals ?? data?.totals)
+                    totalsRow(cfg, rows?.totals ?? data?.totals ?? data?.summary)
                   }
                 />
               }
             >
-              <DataTable
-                columns={columns}
-                data={data}
-                isLoading={isLoading}
-                isFetching={isFetching}
-                error={error}
-                onRetry={refetch}
-                sort={params.sort}
-                onSort={(value) => setParams({ sort: value })}
-                onPage={(page) => setParams({ page }, { keepPage: true })}
-                onPageSize={(pageSize) => setParams({ pageSize })}
-                hasFilters={hasFilters}
-                onReset={reset}
-                noun="rows"
-                footer={footer}
-                emptyTitle="No records found for these dates"
-                emptyMessage="Try different dates or filters."
-              />
+              {/* Special summary cards for Income & Expense */}
+              {cfg?.id === 'income-expense' && data?.summary && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 mb-5">
+                  <div className="rounded-xl border border-line bg-soft/50 p-4">
+                    <p className="text-xs text-muted mb-1">Rental Revenue</p>
+                    <p className="text-lg font-bold text-success">
+                      {formatPKR(data.summary.earnedRentalRevenue ?? data.totals?.earnedRentalRevenue ?? 0)}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-line bg-soft/50 p-4">
+                    <p className="text-xs text-muted mb-1">Cash Received</p>
+                    <p className="text-lg font-bold text-primary">
+                      {formatPKR(data.summary.cashReceived ?? data.totals?.cashReceived ?? 0)}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-line bg-soft/50 p-4">
+                    <p className="text-xs text-muted mb-1">Total Costs</p>
+                    <p className="text-lg font-bold text-danger">
+                      {formatPKR(data.summary.totalCosts ?? data.totals?.totalCosts ?? 0)}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-line bg-soft/50 p-4">
+                    <p className="text-xs text-muted mb-1">Est. Operating Profit</p>
+                    <p className="text-lg font-bold">
+                      {formatPKR(
+                        data.summary.estimatedOperatingProfit ??
+                          data.totals?.estimatedOperatingProfit ??
+                          0
+                      )}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Main table */}
+              {error ? (
+                <NetworkError error={error} onRetry={refetch} />
+              ) : isSummaryOnly && !data?.items?.length ? (
+                <EmptyState
+                  title="Summary loaded"
+                  message="This report shows totals and summary only. Use the cards above or export for details."
+                />
+              ) : (
+                <div className="overflow-x-auto -mx-1 px-1">
+                  <DataTable
+                    columns={columns}
+                    data={data}
+                    isLoading={isLoading}
+                    isFetching={isFetching}
+                    error={error}
+                    onRetry={refetch}
+                    sort={params.sort}
+                    onSort={(value) => setParams({ sort: value })}
+                    onPage={(page) => setParams({ page }, { keepPage: true })}
+                    onPageSize={(pageSize) => setParams({ pageSize })}
+                    hasFilters={hasFilters}
+                    onReset={reset}
+                    noun="rows"
+                    footer={footer}
+                    emptyTitle="No records found for these dates"
+                    emptyMessage="Try different dates or clear some filters."
+                  />
+                </div>
+              )}
             </SectionCard>
           </div>
         </div>

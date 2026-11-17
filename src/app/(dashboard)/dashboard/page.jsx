@@ -153,17 +153,61 @@ const View = ({ href }) => (
 function rangeForPeriod(period, customFrom, customTo) {
   const now = new Date();
 
+  // ---------- CUSTOM RANGE ----------
   if (period === 'custom') {
-    const from = customFrom ? startOfDay(new Date(customFrom)) : startOfDay(now);
-    const to = customTo ? endOfDay(new Date(customTo)) : endOfDay(now);
+    // Safe local date parser (avoids UTC shift)
+    const parseLocal = (str) => {
+      if (!str || typeof str !== 'string') return null;
+      const clean = str.trim();
+      let y, m, d;
+
+      if (clean.includes('-')) {
+        // yyyy-MM-dd
+        const parts = clean.split('-').map(Number);
+        y = parts[0];
+        m = parts[1];
+        d = parts[2];
+      } else if (clean.includes('/')) {
+        // MM/dd/yyyy or dd/MM/yyyy → we assume MM/dd/yyyy (US style used in most date pickers)
+        const parts = clean.split('/').map(Number);
+        m = parts[0];
+        d = parts[1];
+        y = parts[2];
+      } else {
+        return null;
+      }
+
+      if (!y || !m || !d || m < 1 || m > 12 || d < 1 || d > 31) return null;
+      return new Date(y, m - 1, d); // local midnight
+    };
+
+    let fromDate = parseLocal(customFrom);
+    let toDate = parseLocal(customTo);
+
+    // While user is still selecting → keep using today (prevents 400)
+    if (!fromDate || !toDate) {
+      fromDate = startOfDay(now);
+      toDate = endOfDay(now);
+    } else {
+      // Auto-swap if user selected in reverse order
+      if (fromDate.getTime() > toDate.getTime()) {
+        const temp = fromDate;
+        fromDate = toDate;
+        toDate = temp;
+      }
+      fromDate = startOfDay(fromDate);
+      toDate = endOfDay(toDate);
+    }
+
     return {
-      from: from.toISOString(),
-      to: to.toISOString(),
-      labelFrom: format(from, 'yyyy-MM-dd'),
-      labelTo: format(to, 'yyyy-MM-dd'),
+      from: fromDate.toISOString(),
+      to: toDate.toISOString(),
+      labelFrom: format(fromDate, 'yyyy-MM-dd'),
+      labelTo: format(toDate, 'yyyy-MM-dd'),
     };
   }
 
+  // ---------- PRESET RANGES ----------
   let from;
   let to;
 
@@ -225,20 +269,22 @@ export default function DashboardPage() {
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
 
-  const range = useMemo(
-    () => rangeForPeriod(period, customFrom, customTo),
-    [period, customFrom, customTo]
-  );
+  // Only calculate range when both custom dates are present (or preset)
+  const isCustomReady = period !== 'custom' || (customFrom && customTo);
 
-  const dateParams = useMemo(
-    () => ({ from: range.labelFrom, to: range.labelTo }),
-    [range.labelFrom, range.labelTo]
-  );
+  const range = useMemo(() => {
+    return rangeForPeriod(period, customFrom, customTo);
+  }, [period, customFrom, customTo]);
 
-  const isoParams = useMemo(
-    () => ({ from: range.from, to: range.to }),
-    [range.from, range.to]
-  );
+  const dateParams = useMemo(() => {
+    if (!isCustomReady) return { from: '', to: '' }; // temporary empty
+    return { from: range.labelFrom, to: range.labelTo };
+  }, [isCustomReady, range.labelFrom, range.labelTo]);
+
+  const isoParams = useMemo(() => {
+    if (!isCustomReady) return { from: '', to: '' };
+    return { from: range.from, to: range.to };
+  }, [isCustomReady, range.from, range.to]);
 
   /* ---------- Core dashboard (overview + period financials) ---------- */
   const {
@@ -246,7 +292,7 @@ export default function DashboardPage() {
     isLoading: dashLoading,
     error: dashError,
     refetch: refetchDash,
-  } = useGetDashboardQuery(isoParams, { refetchOnMountOrArgChange: true });
+  } = useGetDashboardQuery(isoParams, { skip: !isCustomReady, refetchOnMountOrArgChange: true });
 
   const dash = useMemo(() => unwrap(dashRaw), [dashRaw]);
 
@@ -263,7 +309,7 @@ export default function DashboardPage() {
     isLoading: periodBookingsLoading,
   } = useGetBookingsQuery(
     { ...dateParams, pageSize: 50, page: 1 },
-    { refetchOnMountOrArgChange: true }
+    { skip: !isCustomReady, refetchOnMountOrArgChange: true }
   );
   const periodBookings = useMemo(() => list(unwrap(periodBookingsRaw)), [periodBookingsRaw]);
 
@@ -272,7 +318,7 @@ export default function DashboardPage() {
     isLoading: latestLoading,
   } = useGetBookingsQuery(
     { pageSize: 8, page: 1, sort: 'createdAt:desc' },
-    { refetchOnMountOrArgChange: true }
+    { skip: !isCustomReady, refetchOnMountOrArgChange: true }
   );
   const latestBookings = useMemo(() => list(unwrap(latestRaw)).slice(0, 8), [latestRaw]);
 
@@ -281,14 +327,14 @@ export default function DashboardPage() {
     isLoading: overdueLoading,
   } = useGetBookingsQuery(
     { view: 'overdue', pageSize: 10, page: 1 },
-    { refetchOnMountOrArgChange: true }
+    { skip: !isCustomReady, refetchOnMountOrArgChange: true }
   );
   // Fallback: active rentals past return date
   const {
     data: activeRaw,
   } = useGetBookingsQuery(
     { view: 'active', pageSize: 50, page: 1 },
-    { refetchOnMountOrArgChange: true }
+    { skip: !isCustomReady, refetchOnMountOrArgChange: true }
   );
   const overdueList = useMemo(() => {
     const fromView = list(unwrap(overdueRaw));
@@ -306,14 +352,14 @@ export default function DashboardPage() {
   const {
     data: payStatsRaw,
     isLoading: payStatsLoading,
-  } = useGetPaymentStatsQuery(dateParams, { refetchOnMountOrArgChange: true });
+  } = useGetPaymentStatsQuery(dateParams, { skip: !isCustomReady, refetchOnMountOrArgChange: true });
   const payStats = useMemo(() => unwrap(payStatsRaw), [payStatsRaw]);
 
   const {
     data: recentPaymentsRaw,
   } = useGetPaymentsQuery(
     { ...dateParams, status: 'completed', pageSize: 15, page: 1 },
-    { refetchOnMountOrArgChange: true }
+    { skip: !isCustomReady, refetchOnMountOrArgChange: true }
   );
   const recentPayments = useMemo(() => list(unwrap(recentPaymentsRaw)), [recentPaymentsRaw]);
 
@@ -321,14 +367,14 @@ export default function DashboardPage() {
   const {
     data: expStatsRaw,
     isLoading: expStatsLoading,
-  } = useGetExpenseStatsQuery(dateParams, { refetchOnMountOrArgChange: true });
+  } = useGetExpenseStatsQuery(dateParams, { skip: !isCustomReady, refetchOnMountOrArgChange: true });
   const expStats = useMemo(() => unwrap(expStatsRaw), [expStatsRaw]);
 
   const {
     data: recentExpensesRaw,
   } = useGetExpensesQuery(
     { ...dateParams, pageSize: 10, page: 1 },
-    { refetchOnMountOrArgChange: true }
+    { skip: !isCustomReady, refetchOnMountOrArgChange: true }
   );
   const recentExpenses = useMemo(() => list(unwrap(recentExpensesRaw)), [recentExpensesRaw]);
 
@@ -338,7 +384,7 @@ export default function DashboardPage() {
     isLoading: customersLoading,
   } = useGetCustomersQuery(
     { pageSize: 1, page: 1 },
-    { refetchOnMountOrArgChange: true }
+    { skip: !isCustomReady, refetchOnMountOrArgChange: true }
   );
   const customersSummary = useMemo(() => {
     const d = unwrap(customersRaw);
@@ -351,7 +397,7 @@ export default function DashboardPage() {
     isLoading: remindersLoading,
   } = useGetRemindersQuery(
     { view: 'Today', pageSize: 8, page: 1 },
-    { refetchOnMountOrArgChange: true }
+    { skip: !isCustomReady, refetchOnMountOrArgChange: true }
   );
   const reminders = useMemo(() => list(unwrap(remindersRaw)).slice(0, 8), [remindersRaw]);
 
@@ -374,11 +420,11 @@ export default function DashboardPage() {
     const months = lastSixMonths();
     const incomeTotal = num(
       pick(payStats, ['received', 'rentalReceived', 'netRentalReceived', 'cashReceived'], null) ??
-        pick(dash?.financials, ['cashReceived', 'netCash'], 0)
+      pick(dash?.financials, ['cashReceived', 'netCash'], 0)
     );
     const expenseTotal = num(
       pick(expStats, ['totalAmount', 'totalExpenses', 'total', 'amount'], null) ??
-        pick(dash?.financials, ['expenses'], 0)
+      pick(dash?.financials, ['expenses'], 0)
     );
     const currentKey = format(new Date(), 'yyyy-MM');
     return months.map((m) => ({
@@ -400,21 +446,21 @@ export default function DashboardPage() {
   const fleet = useMemo(() => {
     const totalCars = num(
       pick(carStats, ['totalCars', 'total'], null) ??
-        pick(dash?.overview, ['totalCars', 'total'], 0)
+      pick(dash?.overview, ['totalCars', 'total'], 0)
     );
     const available = num(
       pick(carStats, ['availableCars', 'available'], null) ??
-        pick(dash?.overview, ['availableCars', 'available'], 0)
+      pick(dash?.overview, ['availableCars', 'available'], 0)
     );
     const onRent = num(
       pick(carStats, ['onRentCars', 'on_rent', 'onRent'], null) ??
-        pick(dash?.overview, ['activeRentals', 'onRent'], null) ??
-        pick(dash?.bookings, ['onRent'], 0)
+      pick(dash?.overview, ['activeRentals', 'onRent'], null) ??
+      pick(dash?.bookings, ['onRent'], 0)
     );
     const booked = num(pick(carStats, ['bookedCars', 'booked'], null) ?? pick(dash?.bookings, ['reserved'], 0));
     const repair = num(
       pick(carStats, ['underRepairCars', 'maintenance', 'repair', 'underRepair'], null) ??
-        pick(dash?.overview, ['underRepair', 'repair'], 0)
+      pick(dash?.overview, ['underRepair', 'repair'], 0)
     );
     const outOfService = num(pick(carStats, ['out_of_service', 'outOfService'], 0));
 
@@ -617,11 +663,10 @@ export default function DashboardPage() {
                   key={p.id}
                   type="button"
                   onClick={() => setPeriod(p.id)}
-                  className={`rounded-lg px-3 py-1.5 text-sm font-semibold transition ${
-                    period === p.id
-                      ? 'bg-primary text-white shadow-sm'
-                      : 'bg-soft text-heading hover:bg-line'
-                  }`}
+                  className={`rounded-lg px-3 py-1.5 text-sm font-semibold transition ${period === p.id
+                    ? 'bg-primary text-white shadow-sm'
+                    : 'bg-soft text-heading hover:bg-line'
+                    }`}
                 >
                   {p.label}
                 </button>
@@ -634,8 +679,10 @@ export default function DashboardPage() {
                   from={customFrom}
                   to={customTo}
                   onChange={(r) => {
-                    setCustomFrom(r.from || '');
-                    setCustomTo(r.to || '');
+                    // Only update the field that actually changed
+                    // This prevents one field from clearing the other
+                    if (r.from !== undefined) setCustomFrom(r.from || '');
+                    if (r.to !== undefined) setCustomTo(r.to || '');
                   }}
                   fromLabel="From"
                   toLabel="To"
@@ -1062,11 +1109,10 @@ export default function DashboardPage() {
                             </p>
                           </div>
                           <span
-                            className={`text-xs font-semibold shrink-0 ${
-                              r.view === 'Today' || r.view === 'Overdue'
-                                ? 'text-danger'
-                                : 'text-muted'
-                            }`}
+                            className={`text-xs font-semibold shrink-0 ${r.view === 'Today' || r.view === 'Overdue'
+                              ? 'text-danger'
+                              : 'text-muted'
+                              }`}
                           >
                             {r.view === 'Today'
                               ? `Today, ${safe(fmtTime, r.due || r.dueDate, '')}`

@@ -30,7 +30,7 @@ import {
   Bell,
   Settings,
   FileText,
-  DatabaseBackup,
+  // DatabaseBackup,
 } from "lucide-react";
 
 import {
@@ -236,12 +236,12 @@ export const NAV_ITEMS = Object.freeze([
   // ----------------------------------------------------------
   // No backup permission exists in the backend.
   // Restrict navigation to business admins.
-  {
-    href: "/backup-security",
-    label: "Backup & Security",
-    icon: DatabaseBackup,
-    adminOnly: true,
-  },
+  // {
+  //   href: "/backup-security",
+  //   label: "Backup & Security",
+  //   icon: DatabaseBackup,
+  //   adminOnly: true,
+  // },
 ]);
 
 // ============================================================
