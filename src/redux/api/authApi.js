@@ -188,11 +188,88 @@ export const authApi = baseApi.injectEndpoints({
     // GET /auth/me
     // ==================================================
 
+
     getMe: builder.query({
-      query: () => ({
-        url: `${AUTH_URL}/me`,
-        method: "GET",
-      }),
+      async queryFn(
+        _arg,
+        api,
+        _extraOptions,
+        baseQuery
+      ) {
+        const auth = api.getState()?.auth || {};
+
+        const hasLocalSession =
+          Boolean(auth.token) &&
+          Boolean(auth.user) &&
+          auth.ready === true &&
+          auth.expired !== true;
+
+        const offlineError = {
+          status: "CUSTOM_ERROR",
+          error: "Authentication cannot be verified offline.",
+          data: {
+            message:
+              "Please connect to the internet to verify your session.",
+            _offline: true,
+          },
+        };
+
+        // ================================================
+        // OFFLINE
+        // ================================================
+
+        if (
+          typeof navigator !== "undefined" &&
+          !navigator.onLine
+        ) {
+          if (hasLocalSession) {
+            return {
+              data: {
+                ...auth.user,
+                _offline: true,
+                _unverified: true,
+              },
+            };
+          }
+
+          return { error: offlineError };
+        }
+
+        // ================================================
+        // ONLINE
+        // ================================================
+
+        const result = await baseQuery({
+          url: "/auth/me",
+          method: "GET",
+        });
+
+        if (!result.error) {
+          return { data: result.data };
+        }
+
+        // Network failure is not a session-expiry error.
+        // Preserve an existing local session, but mark
+        // it as unverified.
+        if (
+          result.error.status === "FETCH_ERROR" ||
+          result.error.status === "TIMEOUT_ERROR"
+        ) {
+          if (hasLocalSession) {
+            return {
+              data: {
+                ...auth.user,
+                _offline: true,
+                _unverified: true,
+              },
+            };
+          }
+        }
+
+        // 401/403/503 and other HTTP errors are not
+        // converted into successful authentication.
+        return { error: result.error };
+      },
 
       providesTags: ["Auth"],
 
@@ -203,17 +280,18 @@ export const authApi = baseApi.injectEndpoints({
         try {
           const { data } = await queryFulfilled;
 
-          const user = data;
-
-          if (user) {
-            dispatch(setUser(user));
-            updateStoredUser(getState, user);
+          // Update the saved user only after a
+          // successful backend verification.
+          if (data && !data._offline) {
+            dispatch(setUser(data));
+            updateStoredUser(getState, data);
           }
         } catch {
-          // Error handled by baseApi.
+          // RTK Query handles the error.
         }
       },
     }),
+
 
     // ==================================================
     // 7. UPDATE PROFILE

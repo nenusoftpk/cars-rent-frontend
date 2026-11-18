@@ -553,3 +553,4 @@ function PlaylistPanel({ videos, activeId, onSelect, totalAll, compact = false }
     </div>
   );
 }
+

@@ -1,101 +1,160 @@
-import { baseApi, clean } from "./baseApi";
 
-export const dashboardApi = baseApi.injectEndpoints({
-  endpoints: (builder) => ({
-    // --------------------------------------------------
-    // Main dashboard stats
-    // GET /dashboard
-    // --------------------------------------------------
-    getDashboard: builder.query({
-      query: (params = {}) => ({
-        url: "/dashboard",
-        method: "GET",
-        params: clean(params),
-      }),
-      providesTags: ["Dashboard"],
-    }),
+/**
+ * src/redux/api/dashboardApi.js
+ *
+ * Rent-a-Car SaaS — Dashboard API
+ *
+ * This file provides backward-compatible exports for
+ * existing dashboard and reminder functionality.
+ *
+ * ENDPOINT OWNERSHIP:
+ *
+ * reportApi.js
+ *   - getDashboard
+ *
+ * systemApi.js
+ *   - getReminders
+ *   - completeReminder
+ *   - reopenReminder
+ *   - getNotifications
+ *   - searchAll
+ *
+ * This module does not inject duplicate endpoints.
+ *
+ * ONLINE:
+ *   Uses the original backend endpoints.
+ *
+ * OFFLINE:
+ *   Uses the IndexedDB cache implementations
+ *   provided by reportApi.js and systemApi.js.
+ *
+ * Existing pages and components can continue
+ * importing their hooks from dashboardApi.js.
+ */
 
-    // --------------------------------------------------
-    // Centralised reminders
-    // GET /dashboard/reminders
-    // Supports: view, search, type, source, category,
-    //           priority, from, to, page, pageSize, days
-    // --------------------------------------------------
-    getReminders: builder.query({
-      query: (params = {}) => ({
-        url: "/dashboard/reminders",
-        method: "GET",
-        params: clean(params),
-      }),
-      providesTags: ["Reminders"],
-    }),
+// ======================================================
+// IMPORT SHARED RTK QUERY API
+// ======================================================
 
-    // --------------------------------------------------
-    // Mark reminder as done
-    // PATCH /dashboard/reminders/:id/complete
-    // --------------------------------------------------
-    completeReminder: builder.mutation({
-      query: (id) => ({
-        url: `/dashboard/reminders/${id}/complete`,
-        method: "PATCH",
-      }),
-      invalidatesTags: ["Reminders", "Notifications"],
-    }),
+import { baseApi } from "./baseApi";
 
-    // --------------------------------------------------
-    // Reopen a completed reminder
-    // PATCH /dashboard/reminders/:id/reopen
-    // --------------------------------------------------
-    reopenReminder: builder.mutation({
-      query: (id) => ({
-        url: `/dashboard/reminders/${id}/reopen`,
-        method: "PATCH",
-      }),
-      invalidatesTags: ["Reminders", "Notifications"],
-    }),
+// ======================================================
+// IMPORT DASHBOARD HOOKS
+// ======================================================
 
-    // --------------------------------------------------
-    // Notifications (high / medium priority reminders)
-    // GET /dashboard/notifications
-    // --------------------------------------------------
-    getNotifications: builder.query({
-      query: (params = {}) => ({
-        url: "/dashboard/notifications",
-        method: "GET",
-        params: clean(params),
-      }),
-      providesTags: ["Notifications"],
-    }),
-
-    // --------------------------------------------------
-    // Global search
-    // GET /dashboard/search?q=...
-    // --------------------------------------------------
-    globalSearch: builder.query({
-      query: (params = {}) => ({
-        url: "/dashboard/search",
-        method: "GET",
-        params: clean(params),
-      }),
-      // No long-lived tags – search is ephemeral
-    }),
-  }),
-
-  overrideExisting: false,
-});
-
-export const {
+import {
   useGetDashboardQuery,
   useLazyGetDashboardQuery,
+} from "./reportApi";
 
+// ======================================================
+// IMPORT SYSTEM HOOKS
+// ======================================================
+
+import {
   useGetRemindersQuery,
   useLazyGetRemindersQuery,
+
   useCompleteReminderMutation,
   useReopenReminderMutation,
 
   useGetNotificationsQuery,
   useLazyGetNotificationsQuery,
 
-  useGlobalSearchQuery,
-  useLazyGlobalSearchQuery,
-} = dashboardApi;
+  useSearchAllQuery,
+  useLazySearchAllQuery,
+} from "./systemApi";
+
+// ======================================================
+// DASHBOARD API
+// ======================================================
+
+/**
+ * All endpoints are already injected into baseApi
+ * by their respective owning modules.
+ *
+ * Do not inject them again here.
+ *
+ * This avoids duplicate endpoint definitions and
+ * ensures the offline-aware implementations remain
+ * active throughout the application.
+ */
+
+export const dashboardApi = baseApi;
+
+// ======================================================
+// DASHBOARD STATS HOOKS
+// ======================================================
+
+export {
+  useGetDashboardQuery,
+  useLazyGetDashboardQuery,
+};
+
+// ======================================================
+// REMINDER HOOKS
+// ======================================================
+
+export {
+  useGetRemindersQuery,
+  useLazyGetRemindersQuery,
+
+  useCompleteReminderMutation,
+  useReopenReminderMutation,
+};
+
+// ======================================================
+// NOTIFICATION HOOKS
+// ======================================================
+
+export {
+  useGetNotificationsQuery,
+  useLazyGetNotificationsQuery,
+};
+
+// ======================================================
+// GLOBAL SEARCH HOOKS
+// ======================================================
+
+/**
+ * The original dashboardApi.js used:
+ *
+ *   useGlobalSearchQuery
+ *   useLazyGlobalSearchQuery
+ *
+ * systemApi.js uses:
+ *
+ *   useSearchAllQuery
+ *   useLazySearchAllQuery
+ *
+ * Re-export the same underlying RTK Query hooks
+ * using their original names.
+ *
+ * This preserves existing imports without
+ * creating another search endpoint.
+ */
+
+export {
+  useSearchAllQuery as useGlobalSearchQuery,
+  useLazySearchAllQuery as useLazyGlobalSearchQuery,
+};
+
+// ======================================================
+// OPTIONAL SYSTEM SEARCH EXPORTS
+// ======================================================
+
+/**
+ * These additional exports allow components to use
+ * either naming convention.
+ */
+
+export {
+  useSearchAllQuery,
+  useLazySearchAllQuery,
+};
+
+// ======================================================
+// DEFAULT EXPORT
+// ======================================================
+
+export default dashboardApi;

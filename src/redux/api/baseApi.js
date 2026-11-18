@@ -1,10 +1,15 @@
-
 import {
   createApi,
   fetchBaseQuery,
 } from "@reduxjs/toolkit/query/react";
 
 import { sessionExpired } from "../slices/authSlice";
+
+import {
+  executeOffline,
+  isNetworkFailure,
+  isBrowserOnline,
+} from "@/offline/offlineAdapter";
 
 // ======================================================
 // CONFIGURATION
@@ -27,7 +32,6 @@ const AUTH_STORAGE_KEY = "rac_auth";
 const realBaseQuery = fetchBaseQuery({
   baseUrl: API_URL,
 
-  // Backend uses JWT Bearer authentication.
   prepareHeaders: (headers, { getState }) => {
     const token = getState()?.auth?.token;
 
@@ -39,7 +43,6 @@ const realBaseQuery = fetchBaseQuery({
 
     headers.set("Accept", "application/json");
 
-    // Do not manually set Content-Type.
     // fetchBaseQuery handles JSON and FormData.
     return headers;
   },
@@ -48,22 +51,6 @@ const realBaseQuery = fetchBaseQuery({
 // ======================================================
 // BACKEND RESPONSE UNWRAPPING
 // ======================================================
-
-// Backend response example:
-//
-// {
-//   success: true,
-//   message: "Logged in successfully.",
-//   data: {
-//     user: {},
-//     token: "jwt-token"
-//   }
-// }
-//
-// RTK Query returns only the inner data object.
-//
-// Error responses remain unchanged so the frontend
-// can display backend validation messages.
 
 const unwrapResponse = (response) => {
   if (
@@ -95,9 +82,6 @@ const unwrapResponse = (response) => {
 // PUBLIC AUTH ROUTES
 // ======================================================
 
-// A failed public authentication request should not
-// automatically expire an existing authenticated session.
-
 const PUBLIC_AUTH_ROUTES = new Set([
   "/auth/signup",
   "/auth/login",
@@ -106,32 +90,244 @@ const PUBLIC_AUTH_ROUTES = new Set([
   "/auth/verify-email",
 ]);
 
-const isPublicAuthRequest = (url) => {
-  const path = String(url || "")
-    .split("?")[0]
-    .replace(/\/+$/, "");
+const normalizePath = (url) => {
+  const raw = String(url || "").split("?")[0];
 
-  return PUBLIC_AUTH_ROUTES.has(path);
+  try {
+    if (/^https?:\/\//i.test(raw)) {
+      return new URL(raw).pathname
+        .replace(/^\/api\/v1/, "")
+        .replace(/\/+$/, "") || "/";
+    }
+  } catch {
+    // Fall back to relative URL handling.
+  }
+
+  return raw
+    .replace(/^\/api\/v1/, "")
+    .replace(/\/+$/, "") || "/";
 };
+
+const isPublicAuthRequest = (url) =>
+  PUBLIC_AUTH_ROUTES.has(normalizePath(url));
 
 // ======================================================
 // SESSION STORAGE
 // ======================================================
 
 const removeSavedSession = () => {
-  if (typeof window === "undefined") {
-    return;
-  }
+  if (typeof window === "undefined") return;
 
   try {
     localStorage.removeItem(AUTH_STORAGE_KEY);
   } catch {
-    // Storage may be disabled by browser settings.
+    // Storage may be disabled.
   }
 };
 
 // ======================================================
-// BASE QUERY WITH SESSION HANDLING
+// OFFLINE ROUTE CONFIGURATION
+// ======================================================
+
+/**
+ * Only explicitly supported endpoints can use IndexedDB.
+ *
+ * Do not automatically intercept:
+ * - Authentication
+ * - Subscription management
+ * - Platform administration
+ * - Payments
+ * - Financial transactions
+ * - File uploads
+ * - Special booking actions
+ *
+ * Other APIs continue using the backend normally.
+ */
+
+const OFFLINE_RESOURCES = Object.freeze({
+  cars: "car",
+  customers: "customer",
+  bookings: "booking",
+});
+
+const OFFLINE_METHODS = new Set([
+  "GET",
+  "POST",
+  "PATCH",
+  "PUT",
+  "DELETE",
+]);
+
+const OFFLINE_WRITES = Object.freeze({
+  car: new Set(["create", "update", "delete"]),
+  customer: new Set(["create", "update", "delete"]),
+  booking: new Set(["create", "update"]),
+});
+
+// ======================================================
+// OFFLINE REQUEST MATCHING
+// ======================================================
+
+function parseOfflineRequest(args) {
+  const request =
+    typeof args === "string"
+      ? { url: args, method: "GET" }
+      : args || {};
+
+  const method = String(
+    request.method || "GET"
+  ).toUpperCase();
+
+  if (!OFFLINE_METHODS.has(method)) {
+    return null;
+  }
+
+  const rawUrl = String(request.url || "");
+
+  const [path, queryString = ""] =
+    normalizePath(rawUrl).split("?");
+
+  const segments = path.split("/").filter(Boolean);
+
+  if (!segments.length || segments.length > 2) {
+    return null;
+  }
+
+  const entity = OFFLINE_RESOURCES[segments[0]];
+
+  if (!entity) return null;
+
+  const id = segments[1] || null;
+
+  const params = {
+    ...Object.fromEntries(
+      new URLSearchParams(queryString)
+    ),
+    ...(request.params || {}),
+  };
+
+  let action = null;
+
+  if (method === "GET") {
+    action = id ? "get" : "list";
+  } else if (method === "POST" && !id) {
+    action = "create";
+  } else if (
+    (method === "PATCH" || method === "PUT") &&
+    id
+  ) {
+    action = "update";
+  } else if (method === "DELETE" && id) {
+    action = "delete";
+  }
+
+  if (!action) return null;
+
+  // Bookings cannot be deleted through the generic
+  // adapter. Cancellation uses a special backend route.
+  if (
+    action !== "list" &&
+    action !== "get" &&
+    !OFFLINE_WRITES[entity]?.has(action)
+  ) {
+    return null;
+  }
+
+  return {
+    entity,
+    action,
+    id,
+    params,
+    payload: request.body,
+  };
+}
+
+// ======================================================
+// AUTHENTICATED OFFLINE CONTEXT
+// ======================================================
+
+/**
+ * Offline access must be restricted to authenticated
+ * users and their permitted records.
+ *
+ * This version deliberately requires an explicit
+ * permission filter. It does not use () => true,
+ * because that could expose another employee's data.
+ *
+ * Your authSlice must provide:
+ * - auth.businessId OR auth.user.businessId
+ * - auth.user.role
+ * - auth.user.dataScope / permissions
+ *
+ * For now, only admins can use offline data.
+ * Employee offline access requires a verified
+ * employee-specific permission filter.
+ */
+
+function getOfflineContext(api) {
+  const state = api.getState();
+  const auth = state?.auth || {};
+
+  const user = auth.user || {};
+
+  const businessId =
+    auth.businessId ||
+    user.businessId ||
+    user.business?._id ||
+    user.business?.id ||
+    null;
+
+  const token = auth.token;
+
+  if (!token || !businessId) {
+    return null;
+  }
+
+  // This is intentionally conservative.
+  // Platform super-admins must not access tenant
+  // data through an unrestricted local cache.
+  if (user.role !== "admin") {
+    return null;
+  }
+
+  return {
+    businessId: String(
+      businessId?._id ||
+      businessId?.id ||
+      businessId
+    ),
+    accessFilter: (record) =>
+      String(record.businessId) ===
+      String(
+        businessId?._id ||
+        businessId?.id ||
+        businessId
+      ),
+  };
+}
+
+// ======================================================
+// OFFLINE REQUEST EXECUTION
+// ======================================================
+
+async function tryOfflineRequest(args, api) {
+  const route = parseOfflineRequest(args);
+
+  if (!route) return null;
+
+  const context = getOfflineContext(api);
+
+  if (!context) return null;
+
+  return executeOffline({
+    ...route,
+    businessId: context.businessId,
+    accessFilter: context.accessFilter,
+  });
+}
+
+// ======================================================
+// BASE QUERY WITH OFFLINE SUPPORT
 // ======================================================
 
 const baseQuery = async (
@@ -139,10 +335,6 @@ const baseQuery = async (
   api,
   extraOptions
 ) => {
-  // Capture the token used when the request begins.
-  // This prevents an old 401 response from clearing
-  // a different, newly authenticated session.
-
   const requestToken =
     api.getState()?.auth?.token ?? null;
 
@@ -151,7 +343,8 @@ const baseQuery = async (
       ? args
       : args?.url || "";
 
-  // Use mock API only when explicitly enabled.
+  const offlineRoute = parseOfflineRequest(args);
+
   const queryFn = USE_MOCK
     ? (
         await import(
@@ -160,6 +353,27 @@ const baseQuery = async (
       ).mockBaseQuery
     : realBaseQuery;
 
+  // ==================================================
+  // 1. OFFLINE FIRST WHEN DISCONNECTED
+  // ==================================================
+
+  if (
+    !USE_MOCK &&
+    !isBrowserOnline() &&
+    offlineRoute
+  ) {
+    const offlineResult =
+      await tryOfflineRequest(args, api);
+
+    if (offlineResult) {
+      return offlineResult;
+    }
+  }
+
+  // ==================================================
+  // 2. NORMAL ONLINE REQUEST
+  // ==================================================
+
   const result = await queryFn(
     args,
     api,
@@ -167,7 +381,7 @@ const baseQuery = async (
   );
 
   // ==================================================
-  // UNWRAP SUCCESSFUL BACKEND RESPONSES
+  // 3. UNWRAP SUCCESSFUL RESPONSE
   // ==================================================
 
   if (
@@ -178,7 +392,25 @@ const baseQuery = async (
   }
 
   // ==================================================
-  // HANDLE EXPIRED JWT
+  // 4. NETWORK FAILURE FALLBACK
+  // ==================================================
+
+  if (
+    !USE_MOCK &&
+    result.error &&
+    isNetworkFailure(result.error) &&
+    offlineRoute
+  ) {
+    const offlineResult =
+      await tryOfflineRequest(args, api);
+
+    if (offlineResult) {
+      return offlineResult;
+    }
+  }
+
+  // ==================================================
+  // 5. HANDLE EXPIRED JWT
   // ==================================================
 
   const isUnauthorized =
@@ -199,17 +431,10 @@ const baseQuery = async (
     !isPublicRequest &&
     sameSession
   ) {
-    // Clear Redux authentication state.
     api.dispatch(sessionExpired());
 
-    // Clear browser-persisted JWT.
     removeSavedSession();
 
-    // Remove cached data belonging to this session.
-    //
-    // Use the RTK Query reset action directly.
-    // This is safe because baseApi is initialized
-    // before the first network request executes.
     api.dispatch(
       baseApi.util.resetApiState()
     );
@@ -265,39 +490,16 @@ export const baseApi = createApi({
 
   endpoints: () => ({}),
 
-  // Keep unused query data for 60 seconds.
   keepUnusedDataFor: 60,
 
-  // Refetch stale data when the browser reconnects.
   refetchOnReconnect: true,
 
-  // Refetch when the user returns to the browser tab.
   refetchOnFocus: true,
 });
 
 // ======================================================
 // CLEAN QUERY PARAMETERS
 // ======================================================
-
-// Removes empty values before sending query parameters.
-//
-// Example:
-//
-// clean({
-//   search: "Toyota",
-//   status: "all",
-//   page: 1,
-//   limit: 10,
-//   from: "",
-// });
-//
-// Result:
-//
-// {
-//   search: "Toyota",
-//   page: 1,
-//   limit: 10,
-// }
 
 export const clean = (params = {}) => {
   if (
@@ -310,14 +512,11 @@ export const clean = (params = {}) => {
 
   return Object.fromEntries(
     Object.entries(params).filter(
-      ([, value]) => {
-        return (
-          value !== "" &&
-          value !== null &&
-          value !== undefined &&
-          value !== "all"
-        );
-      }
+      ([, value]) =>
+        value !== "" &&
+        value !== null &&
+        value !== undefined &&
+        value !== "all"
     )
   );
 };
@@ -330,15 +529,9 @@ export const errorMessage = (
   error,
   fallback = "Something went wrong. Please try again."
 ) => {
-  if (!error) {
-    return fallback;
-  }
+  if (!error) return fallback;
 
   const data = error?.data;
-
-  // ==================================================
-  // BACKEND ERROR MESSAGE
-  // ==================================================
 
   if (
     typeof data?.message === "string" &&
@@ -353,10 +546,6 @@ export const errorMessage = (
   ) {
     return data.error;
   }
-
-  // ==================================================
-  // JOI VALIDATION ERRORS
-  // ==================================================
 
   if (Array.isArray(data?.errors)) {
     const firstError = data.errors[0];
@@ -382,10 +571,6 @@ export const errorMessage = (
     }
   }
 
-  // ==================================================
-  // NETWORK ERROR
-  // ==================================================
-
   if (error.status === "FETCH_ERROR") {
     return "Unable to connect to the server. Please check your internet connection.";
   }
@@ -397,10 +582,6 @@ export const errorMessage = (
   if (error.status === "PARSING_ERROR") {
     return "The server returned an invalid response.";
   }
-
-  // ==================================================
-  // HTTP STATUS ERRORS
-  // ==================================================
 
   switch (error.status) {
     case 400:

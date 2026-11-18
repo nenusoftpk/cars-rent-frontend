@@ -140,6 +140,19 @@ export default function DriverFormModal({ open, driver, onClose }) {
     try {
       const payload = { ...v };
 
+      console.log("DRIVER IMAGE DEBUG:", {
+        photo: payload.photo,
+        photoIsFile: payload.photo instanceof File,
+
+        cnicFront: payload.cnicFront,
+        cnicFrontIsFile: payload.cnicFront instanceof File,
+
+        cnicBack: payload.cnicBack,
+        cnicBackIsFile: payload.cnicBack instanceof File,
+
+        licenseImage: payload.licenseImage,
+        licenseImageIsFile: payload.licenseImage instanceof File,
+      });
       // Never send "assigned" – it is managed by bookings
       if (isAssigned) delete payload.status;
 

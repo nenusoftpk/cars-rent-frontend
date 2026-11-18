@@ -1,5 +1,25 @@
+/**
+ * src/redux/api/bookingApi.js
+ *
+ * Full online + offline support for bookings.
+ *
+ * - List / get / create / update work offline via baseApi + offlineAdapter
+ * - Stats & availability have high-quality local fallbacks
+ * - extend / cancel remain online-only (special routes + business rules)
+ * - Same hooks, same argument shapes, zero page changes
+ */
+
 import { baseApi, clean } from "./baseApi";
 import { PAYMENT_METHODS } from "@/constants";
+import {
+  isBrowserOnline,
+  isNetworkFailure,
+  executeOffline,
+} from "@/offline/offlineAdapter";
+
+// ======================================================
+// CACHE TAGS
+// ======================================================
 
 const BOOKING_TAGS = [
   "Bookings",
@@ -18,10 +38,8 @@ const BOOKING_TAGS = [
 
 /**
  * GET /bookings only reads: page, limit, search, status, customerId, carId,
- * employeeId, from, to  (sorting is always createdAt desc, `from`/`to` filter the
- * PICK-UP date). Sending anything else is rejected with 400 by the query validator.
- * After you add sort / dateField / view support to listBookings (and to
- * bookingFilterSchema) set this to true and the extra params are sent too.
+ * employeeId, from, to. Sorting is always createdAt desc on the server.
+ * Set to true only after backend supports the extra params.
  */
 const SERVER_LIST_EXTRAS = false;
 
@@ -67,7 +85,7 @@ export const toIso = (v) => {
 
 /* ---------------- payments: labels <-> backend enums ---------------- */
 
-/** UI payment-method label → backend enum (cash|bank|jazzcash|easypaisa|card|other) */
+/** UI payment-method label → backend enum */
 export const payMethod = (m) => {
   const s = String(m || "").toLowerCase();
   if (!s) return "";
@@ -79,7 +97,7 @@ export const payMethod = (m) => {
   return "other";
 };
 
-/** backend method enum → the label used by PAYMENT_METHODS (METHOD_ICON keys) */
+/** backend method enum → the label used by PAYMENT_METHODS */
 export const payMethodLabel = (m) => {
   if (!m) return "";
   if (PAYMENT_METHODS.includes(m)) return m;
@@ -111,7 +129,7 @@ const TYPE_ENUM = {
 export const payTypeLabel = (t) => TYPE_LABEL[t] || t || "";
 export const payTypeEnum = (t) => TYPE_ENUM[toEnum(t)] || toEnum(t);
 
-/** backend payment (list row, booking.payments[] or create response) → UI shape */
+/** backend payment → UI shape */
 export function mapPayment(p) {
   if (!p) return p;
   const booking = isObj(p.bookingId) ? p.bookingId : null;
@@ -138,7 +156,7 @@ export function mapPayment(p) {
 
 /* ---------------- inspections / bookings ---------------- */
 
-/** backend inspection (issue / return) → shape the UI expects */
+/** backend inspection → UI shape */
 export function mapInspection(i) {
   if (!i) return null;
   return {
@@ -163,10 +181,7 @@ const RAW_CHARGE_ROWS = [
 ];
 
 /**
- * GET /bookings, GET /bookings/:id and create/update/extend/cancel already return the
- * UI shape (number, invoiceNo, customerName, pickupAt, total, paid, balance, status
- * label, charges, issue, returnInfo, deposit*, payments). This only fills gaps, so it
- * also works for the raw booking rows embedded in GET /cars/:id.
+ * Normalize any booking (online or offline) to the shape pages expect.
  */
 export function mapBooking(b) {
   if (!b) return b;
@@ -249,6 +264,10 @@ export function mapBooking(b) {
 
     payments: Array.isArray(b.payments) ? b.payments.map(mapPayment) : b.payments,
     history: Array.isArray(b.history) ? b.history : [],
+
+    // Offline markers (harmless online)
+    _offline: b._offline || false,
+    _pendingSync: b._pendingSync || false,
   };
 }
 
@@ -284,8 +303,6 @@ function mapBookingBody(b = {}) {
   if (b.discount !== undefined && b.discount !== "") out.discount = Number(b.discount) || 0;
   if (b.deposit !== undefined) out.securityDeposit = Number(b.deposit) || 0;
 
-  // advance / deposit RECEIPTS are separate calls to /payments (see paymentApi);
-  // charges[], method and requestId are not booking fields.
   return out;
 }
 
@@ -321,11 +338,11 @@ export function mapBookingParams(p = {}) {
   let from = p.from;
   const view = p.view;
 
-  if (status === "overdue") status = "on_rent"; // filtered to late ones in transformResponse
+  if (status === "overdue") status = "on_rent";
   if (view && VIEW_STATUS[view] && !status) status = VIEW_STATUS[view];
   if (view === "upcoming") {
     if (!status) status = "reserved";
-    if (!from) from = new Date().toISOString().slice(0, 10); // pick-up from today on
+    if (!from) from = new Date().toISOString().slice(0, 10);
   }
   if (view === "overdue" && !status) status = "on_rent";
 
@@ -344,7 +361,7 @@ export function mapBookingParams(p = {}) {
   return q;
 }
 
-/** the backend sorts by createdAt desc only, so sort the rows of the page here */
+/** Client-side sort (backend always sorts createdAt desc) */
 const sortItems = (items, sort) => {
   if (!sort) return items;
   const [field, dir] = String(sort).split(":");
@@ -357,21 +374,203 @@ const sortItems = (items, sort) => {
   return [...items].sort((a, b) => (val(a) > val(b) ? k : val(a) < val(b) ? -k : 0));
 };
 
-/** { items, pagination } → { items, pagination, page, pageSize, total, totalPages } */
+/** Normalize list response shape */
 const flatten = (body, items) => {
   const p = body.pagination || {};
   return {
     items,
     pagination: p,
-    page: p.page ?? 1,
-    pageSize: p.limit ?? items.length,
-    total: p.total ?? items.length,
-    totalPages: p.totalPages ?? 1,
+    page: body.page ?? p.page ?? 1,
+    pageSize: body.pageSize ?? p.limit ?? items.length,
+    total: body.total ?? p.total ?? items.length,
+    totalPages: body.totalPages ?? p.totalPages ?? 1,
+    _offline: body._offline || false,
   };
 };
 
+// ======================================================
+// LOCAL FALLBACKS (used when offline / network failure)
+// ======================================================
+
+/**
+ * Approximate booking stats from the local IndexedDB cache.
+ * Good enough for tab badges while offline.
+ */
+async function localBookingStats(api) {
+  const state = api.getState();
+  const auth = state?.auth || {};
+  const user = auth.user || {};
+  const businessId =
+    auth.businessId ||
+    user.businessId ||
+    user.business?._id ||
+    user.business?.id ||
+    null;
+
+  if (!businessId || user.role !== "admin") {
+    return {
+      data: {
+        total: 0,
+        reserved: 0,
+        onRent: 0,
+        completed: 0,
+        cancelled: 0,
+        all: 0,
+        active: 0,
+        _offline: true,
+      },
+    };
+  }
+
+  const result = await executeOffline({
+    action: "list",
+    entity: "booking",
+    businessId: String(businessId),
+    params: { limit: 3000 },
+    accessFilter: (r) => String(r.businessId) === String(businessId),
+    mapper: mapBooking,
+  });
+
+  if (result.error) {
+    return {
+      data: {
+        total: 0,
+        reserved: 0,
+        onRent: 0,
+        completed: 0,
+        cancelled: 0,
+        all: 0,
+        active: 0,
+        _offline: true,
+      },
+    };
+  }
+
+  const items = result.data?.items || [];
+  const stats = {
+    total: items.length,
+    reserved: 0,
+    onRent: 0,
+    completed: 0,
+    cancelled: 0,
+    _offline: true,
+  };
+
+  for (const b of items) {
+    const s = toEnum(b.status);
+    if (s === "reserved") stats.reserved += 1;
+    else if (s === "on_rent") stats.onRent += 1;
+    else if (s === "completed") stats.completed += 1;
+    else if (s === "cancelled") stats.cancelled += 1;
+  }
+
+  return {
+    data: {
+      ...stats,
+      all: stats.total,
+      active: stats.onRent,
+    },
+  };
+}
+
+/**
+ * Provisional local availability check.
+ * Looks at cached bookings for the same car and overlapping dates.
+ * Result is marked so the UI can show “provisional – confirm when online”.
+ */
+async function localAvailability(args, api) {
+  const state = api.getState();
+  const auth = state?.auth || {};
+  const user = auth.user || {};
+  const businessId =
+    auth.businessId ||
+    user.businessId ||
+    user.business?._id ||
+    user.business?.id ||
+    null;
+
+  if (!businessId || !args.carId) {
+    return {
+      data: {
+        available: true,
+        message: "Unable to verify availability offline. Will be re-checked on sync.",
+        provisional: true,
+        _offline: true,
+      },
+    };
+  }
+
+  const from = new Date(args.from ?? args.pickupDate).getTime();
+  const to = new Date(args.to ?? args.returnDate).getTime();
+  const excludeId = args.excludeId ?? args.excludeBookingId;
+
+  if (!Number.isFinite(from) || !Number.isFinite(to)) {
+    return {
+      data: {
+        available: true,
+        message: "Invalid dates for offline check.",
+        provisional: true,
+        _offline: true,
+      },
+    };
+  }
+
+  const result = await executeOffline({
+    action: "list",
+    entity: "booking",
+    businessId: String(businessId),
+    params: { carId: args.carId, limit: 3000 },
+    accessFilter: (r) => String(r.businessId) === String(businessId),
+    mapper: mapBooking,
+  });
+
+  if (result.error) {
+    return {
+      data: {
+        available: true,
+        message: "Unable to verify availability offline. Will be re-checked on sync.",
+        provisional: true,
+        _offline: true,
+      },
+    };
+  }
+
+  const items = (result.data?.items || []).filter((b) => {
+    if (excludeId && String(b.id) === String(excludeId)) return false;
+    const status = toEnum(b.status);
+    if (status === "cancelled" || status === "completed") return false;
+    return true;
+  });
+
+  const conflict = items.some((b) => {
+    const bFrom = new Date(b.pickupAt || b.pickupDate).getTime();
+    const bTo = new Date(b.returnAt || b.returnDate).getTime();
+    if (!Number.isFinite(bFrom) || !Number.isFinite(bTo)) return false;
+    // Overlap: (startA < endB) && (startB < endA)
+    return from < bTo && bFrom < to;
+  });
+
+  return {
+    data: {
+      available: !conflict,
+      message: conflict
+        ? "This car appears to be booked for these dates (offline check)."
+        : "No conflicting bookings found offline. Final confirmation on sync.",
+      provisional: true,
+      _offline: true,
+    },
+  };
+}
+
+// ======================================================
+// BOOKING API
+// ======================================================
+
 export const bookingApi = baseApi.injectEndpoints({
   endpoints: (builder) => ({
+    // --------------------------------------------------
+    // LIST BOOKINGS
+    // --------------------------------------------------
     getBookings: builder.query({
       query: (params = {}) => ({
         url: "/bookings",
@@ -379,62 +578,101 @@ export const bookingApi = baseApi.injectEndpoints({
         params: mapBookingParams(params),
       }),
       transformResponse: (res, _meta, arg = {}) => {
-        const body = unwrap(res) || {};
+        // Offline adapter already returns the correct shape + mapBooking can be applied
+        const body = unwrap(res) || res || {};
         let items = (body.items || []).map(mapBooking);
+
         if (arg.view === "overdue" || toEnum(arg.status) === "overdue") {
           items = items.filter((b) => b.isOverdue);
         }
         if (!SERVER_LIST_EXTRAS) items = sortItems(items, arg.sort);
+
         return flatten(body, items);
       },
       providesTags: ["Bookings", "Payments"],
     }),
 
-    // GET /bookings/stats → { total, reserved, onRent, completed, cancelled, ... }
-    // Tab counts for All Bookings (upcoming / overdue have no count on the server).
+    // --------------------------------------------------
+    // BOOKING STATS (with offline fallback)
+    // --------------------------------------------------
     getBookingStats: builder.query({
-      query: () => ({
-        url: "/bookings/stats",
-        method: "GET",
-      }),
-      transformResponse: (res) => {
-        const s = unwrap(res) || {};
-        return {
-          ...s,
-          all: s.total,
-          reserved: s.reserved,
-          active: s.onRent,
-          completed: s.completed,
-          cancelled: s.cancelled,
-        };
+      async queryFn(_arg, api, _extraOptions, baseQuery) {
+        // Try online first
+        if (isBrowserOnline()) {
+          const result = await baseQuery({
+            url: "/bookings/stats",
+            method: "GET",
+          });
+
+          if (!result.error) {
+            const s = unwrap(result.data) || {};
+            return {
+              data: {
+                ...s,
+                all: s.total,
+                reserved: s.reserved,
+                active: s.onRent,
+                completed: s.completed,
+                cancelled: s.cancelled,
+              },
+            };
+          }
+
+          // Network failure → fall through to local
+          if (!isNetworkFailure(result.error)) {
+            return { error: result.error };
+          }
+        }
+
+        // Offline or network error → local approximation
+        return localBookingStats(api);
       },
       providesTags: ["Bookings", "Dashboard"],
     }),
 
-    // UI args { carId, from, to, excludeId } → ?carId=&pickupDate=&returnDate=&excludeBookingId=
-    // Backend answer: { available, reason }
+    // --------------------------------------------------
+    // AVAILABILITY CHECK (with provisional offline fallback)
+    // --------------------------------------------------
     checkAvailability: builder.query({
-      query: (args = {}) => ({
-        url: "/bookings/availability",
-        method: "GET",
-        params: clean({
-          carId: args.carId,
-          pickupDate: toIso(args.from ?? args.pickupDate),
-          returnDate: toIso(args.to ?? args.returnDate),
-          excludeBookingId: args.excludeId ?? args.excludeBookingId,
-        }),
-      }),
-      transformResponse: (res) => {
-        const x = unwrap(res) || {};
-        return {
-          ...x,
-          available: x.available !== false,
-          message: x.message || x.reason || "This car is already booked for these dates.",
-        };
+      async queryFn(args = {}, api, _extraOptions, baseQuery) {
+        if (isBrowserOnline()) {
+          const result = await baseQuery({
+            url: "/bookings/availability",
+            method: "GET",
+            params: clean({
+              carId: args.carId,
+              pickupDate: toIso(args.from ?? args.pickupDate),
+              returnDate: toIso(args.to ?? args.returnDate),
+              excludeBookingId: args.excludeId ?? args.excludeBookingId,
+            }),
+          });
+
+          if (!result.error) {
+            const x = unwrap(result.data) || {};
+            return {
+              data: {
+                ...x,
+                available: x.available !== false,
+                message: x.message || x.reason || "This car is already booked for these dates.",
+                provisional: false,
+              },
+            };
+          }
+
+          if (!isNetworkFailure(result.error)) {
+            return { error: result.error };
+          }
+        }
+
+        // Offline / network error → provisional local check
+        return localAvailability(args, api);
       },
       providesTags: ["Bookings", "Cars"],
     }),
 
+    // --------------------------------------------------
+    // SINGLE BOOKING
+    // --------------------------------------------------
     getBooking: builder.query({
       query: (id) => ({
         url: `/bookings/${id}`,
@@ -444,9 +682,16 @@ export const bookingApi = baseApi.injectEndpoints({
         const x = unwrap(res);
         return mapBooking(x?.booking ?? x);
       },
-      providesTags: (result, error, id) => [{ type: "Bookings", id }, "Bookings", "Payments"],
+      providesTags: (result, error, id) => [
+        { type: "Bookings", id },
+        "Bookings",
+        "Payments",
+      ],
     }),
 
+    // --------------------------------------------------
+    // CREATE BOOKING (offline-capable)
+    // --------------------------------------------------
     createBooking: builder.mutation({
       query: (body) => ({
         url: "/bookings",
@@ -460,6 +705,9 @@ export const bookingApi = baseApi.injectEndpoints({
       invalidatesTags: BOOKING_TAGS,
     }),
 
+    // --------------------------------------------------
+    // UPDATE BOOKING (offline-capable)
+    // --------------------------------------------------
     updateBooking: builder.mutation({
       query: ({ id, ...body }) => ({
         url: `/bookings/${id}`,
@@ -473,7 +721,9 @@ export const bookingApi = baseApi.injectEndpoints({
       invalidatesTags: BOOKING_TAGS,
     }),
 
-    // UI sends { id, returnAt } → backend { returnDate }
+    // --------------------------------------------------
+    // EXTEND BOOKING (online-only – special route)
+    // --------------------------------------------------
     extendBooking: builder.mutation({
       query: ({ id, returnAt, returnDate }) => ({
         url: `/bookings/${id}/extend`,
@@ -487,8 +737,9 @@ export const bookingApi = baseApi.injectEndpoints({
       invalidatesTags: BOOKING_TAGS,
     }),
 
-    // The server only accepts { reason }. It refuses to cancel while rental money or a
-    // security deposit is still held, so refunds must be recorded first (Billing).
+    // --------------------------------------------------
+    // CANCEL BOOKING (online-only – special route + money rules)
+    // --------------------------------------------------
     cancelBooking: builder.mutation({
       query: ({ id, reason }) => ({
         url: `/bookings/${id}/cancel`,
@@ -505,6 +756,10 @@ export const bookingApi = baseApi.injectEndpoints({
 
   overrideExisting: false,
 });
+
+// ======================================================
+// HOOKS (unchanged names)
+// ======================================================
 
 export const {
   useGetBookingsQuery,

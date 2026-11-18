@@ -1,126 +1,728 @@
-// PATH: src/redux/api/staffApi.js   (REPLACE your existing file)
-import { baseApi, clean } from './baseApi';
-import { unwrap } from './bookingApi';
 
-const STAFF_TAGS = ['Staff', 'Auth', 'Dashboard'];
+/**
+ * src/redux/api/staffApi.js
+ *
+ * Staff Management API
+ *
+ * ONLINE:
+ * - Fetch staff data from backend.
+ * - Cache successful GET responses in IndexedDB.
+ * - Execute staff mutations on backend only.
+ *
+ * OFFLINE:
+ * - Read previously cached staff information.
+ * - Never create or modify employees offline.
+ * - Never queue permission or password changes.
+ *
+ * SECURITY:
+ * - Offline cache restricted to tenant admins.
+ * - Cache isolated by business and authenticated user.
+ * - Sensitive authentication fields are not cached.
+ *
+ * COMPATIBILITY:
+ * - All 8 existing endpoints preserved.
+ * - All existing hooks preserved.
+ * - Existing argument formats preserved.
+ */
 
-// Multer field name for the profile photo on POST /employees and PATCH /employees/:id.
-// employeeRoutes.js was not uploaded - if your route uses .single('photo') (or similar), change this one word.
-const AVATAR_FIELD = 'avatar';
+import { baseApi, clean } from "./baseApi";
+import { unwrap } from "./bookingApi";
 
-const withId = (d) => (d && typeof d === 'object' ? { ...d, id: d.id ?? d._id } : d);
-const toList = (res) => {
-  const body = unwrap(res) || {};
-  const items = (body.items || []).map(withId);
-  const p = body.pagination || {};
+import {
+  isBrowserOnline,
+  isNetworkFailure,
+} from "@/offline/offlineAdapter";
+
+import {
+  getMeta,
+  setMeta,
+} from "@/offline/cache";
+
+// ======================================================
+// CONFIGURATION
+// ======================================================
+
+const STAFF_TAGS = [
+  "Staff",
+  "Auth",
+  "Dashboard",
+];
+
+const CACHE_PREFIX = "staff-cache:v2";
+
+// Backend multer field name.
+const AVATAR_FIELD = "avatar";
+
+// ======================================================
+// GENERAL HELPERS
+// ======================================================
+
+const getId = (value) => {
+  if (value && typeof value === "object") {
+    return value._id ?? value.id ?? null;
+  }
+
+  return value ?? null;
+};
+
+const withId = (record) => {
+  if (
+    !record ||
+    typeof record !== "object" ||
+    Array.isArray(record)
+  ) {
+    return record;
+  }
+
   return {
-    items,
-    pagination: p,
-    page: p.page ?? 1,
-    pageSize: p.limit ?? items.length,
-    total: p.total ?? items.length,
-    totalPages: p.totalPages ?? 1,
+    ...record,
+    id: record.id ?? record._id,
   };
 };
 
+const toList = (response) => {
+  const body = unwrap(response) || {};
+  const items = (body.items || []).map(withId);
+  const pagination = body.pagination || {};
+
+  return {
+    items,
+    pagination,
+    page: pagination.page ?? body.page ?? 1,
+    pageSize:
+      pagination.limit ??
+      body.pageSize ??
+      items.length,
+    total:
+      pagination.total ??
+      body.total ??
+      items.length,
+    totalPages:
+      pagination.totalPages ??
+      body.totalPages ??
+      1,
+  };
+};
+
+const offlineError = (message) => ({
+  status: "CUSTOM_ERROR",
+  error: message,
+  data: {
+    success: false,
+    message,
+    _offline: true,
+    _unavailable: true,
+  },
+});
+
+// ======================================================
+// STAFF QUERY PARAMETERS
+// ======================================================
+
 /**
- * GET /employees only reads: page, limit, search, status (active | disabled), dataScope (own | business).
- * It always sorts newest first - there is no sort / role parameter.
+ * Backend accepts:
+ *
+ * page, limit, search, status, dataScope
+ *
+ * No unsupported sort or role parameters.
  */
-export const mapStaffParams = (p = {}) =>
+export const mapStaffParams = (params = {}) =>
   clean({
-    page: p.page,
-    limit: p.pageSize ?? p.limit,
-    search: typeof p.search === 'string' ? p.search.trim() : p.search,
-    status: p.status,
-    dataScope: p.dataScope,
+    page: params.page,
+    limit: params.pageSize ?? params.limit,
+    search:
+      typeof params.search === "string"
+        ? params.search.trim()
+        : params.search,
+    status: params.status,
+    dataScope: params.dataScope,
   });
 
-/**
- * createEmployeeSchema / updateEmployeeSchema are .unknown(false):
- *   create: name, email, phone, password, permissions, dataScope (+ avatar file)
- *   update: name, phone (+ avatar file)         <- status / permissions / password have their own endpoints
- * JSON when there is no photo, multipart (permissions as a JSON string) when there is one.
- */
-function staffBody(b = {}, creating) {
-  const json = { name: String(b.name ?? '').trim(), phone: String(b.phone ?? '').trim() };
-  if (creating) {
-    json.email = String(b.email ?? '').trim();
-    json.password = b.password;
-    json.permissions = b.permissions ?? [];
-    json.dataScope = b.dataScope || 'own';
-  }
-  const file = b.photo instanceof File ? b.photo : null;
-  if (!file) return json;
+// ======================================================
+// STAFF REQUEST BODY
+// ======================================================
 
-  const fd = new FormData();
-  Object.entries(json).forEach(([k, v]) => fd.append(k, k === 'permissions' ? JSON.stringify(v) : String(v)));
-  fd.append(AVATAR_FIELD, file);
-  return fd;
+/**
+ * CREATE:
+ * name, email, phone, password,
+ * permissions, dataScope
+ *
+ * UPDATE:
+ * name, phone
+ *
+ * Profile image:
+ * multipart field = avatar
+ */
+function staffBody(body = {}, creating = false) {
+  const json = {
+    name: String(body.name ?? "").trim(),
+    phone: String(body.phone ?? "").trim(),
+  };
+
+  if (creating) {
+    json.email = String(body.email ?? "").trim();
+    json.password = body.password;
+    json.permissions = body.permissions ?? [];
+    json.dataScope = body.dataScope || "own";
+  }
+
+  const file =
+    typeof File !== "undefined" &&
+    body.photo instanceof File
+      ? body.photo
+      : null;
+
+  if (!file) {
+    return json;
+  }
+
+  const formData = new FormData();
+
+  Object.entries(json).forEach(([key, value]) => {
+    formData.append(
+      key,
+      key === "permissions"
+        ? JSON.stringify(value)
+        : String(value)
+    );
+  });
+
+  formData.append(AVATAR_FIELD, file);
+
+  return formData;
 }
+
+// ======================================================
+// AUTHENTICATED CACHE CONTEXT
+// ======================================================
+
+function getStaffContext(api) {
+  const auth = api.getState()?.auth || {};
+  const user = auth.user || {};
+
+  const businessId = getId(
+    auth.businessId ??
+    user.businessId ??
+    user.business
+  );
+
+  const userId = getId(
+    user._id ?? user.id
+  );
+
+  const role = auth.role ?? user.role;
+
+  if (
+    !auth.token ||
+    !businessId ||
+    !userId ||
+    role !== "admin"
+  ) {
+    return null;
+  }
+
+  return {
+    businessId: String(businessId),
+    userId: String(userId),
+  };
+}
+
+// ======================================================
+// STABLE CACHE KEY
+// ======================================================
+
+function stableSerialize(value) {
+  if (Array.isArray(value)) {
+    return value.map(stableSerialize);
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, item]) => [
+          key,
+          stableSerialize(item),
+        ])
+    );
+  }
+
+  return value;
+}
+
+function buildCacheKey(
+  context,
+  endpoint,
+  params = {}
+) {
+  return JSON.stringify({
+    namespace: CACHE_PREFIX,
+    businessId: context.businessId,
+    userId: context.userId,
+    endpoint,
+    params: stableSerialize(clean(params)),
+  });
+}
+
+// ======================================================
+// SENSITIVE FIELD REMOVAL
+// ======================================================
+
+/**
+ * Remove known authentication secrets recursively
+ * before storing responses in IndexedDB.
+ *
+ * Note: Staff names, emails and phone numbers remain
+ * personal data and require device-level protection.
+ */
+const SENSITIVE_FIELDS = new Set([
+  "password",
+  "passwordHash",
+  "passwordResetToken",
+  "resetPasswordToken",
+  "resetPasswordExpires",
+  "refreshToken",
+  "accessToken",
+  "token",
+  "secret",
+  "otp",
+  "otpCode",
+  "twoFactorSecret",
+]);
+
+function sanitizeStaffData(value) {
+  if (Array.isArray(value)) {
+    return value.map(sanitizeStaffData);
+  }
+
+  if (
+    !value ||
+    typeof value !== "object"
+  ) {
+    return value;
+  }
+
+  const result = {};
+
+  for (const [key, item] of Object.entries(value)) {
+    if (SENSITIVE_FIELDS.has(key)) {
+      continue;
+    }
+
+    result[key] = sanitizeStaffData(item);
+  }
+
+  return result;
+}
+
+// ======================================================
+// INDEXEDDB CACHE
+// ======================================================
+
+async function saveStaffCache(key, data) {
+  try {
+    await setMeta(key, {
+      data: sanitizeStaffData(data),
+      cachedAt: new Date().toISOString(),
+    });
+
+    return true;
+  } catch (error) {
+    if (process.env.NODE_ENV === "development") {
+      console.warn(
+        "[Staff API] Cache write failed:",
+        error
+      );
+    }
+
+    return false;
+  }
+}
+
+async function readStaffCache(key) {
+  try {
+    const cached = await getMeta(key);
+
+    if (
+      !cached ||
+      !Object.prototype.hasOwnProperty.call(
+        cached,
+        "data"
+      )
+    ) {
+      return null;
+    }
+
+    return cached;
+  } catch (error) {
+    if (process.env.NODE_ENV === "development") {
+      console.warn(
+        "[Staff API] Cache read failed:",
+        error
+      );
+    }
+
+    return null;
+  }
+}
+
+// ======================================================
+// SHARED ONLINE / OFFLINE READ
+// ======================================================
+
+async function executeStaffRead({
+  url,
+  params = {},
+  api,
+  baseQuery,
+  transform = (data) => data,
+}) {
+  const context = getStaffContext(api);
+  const queryParams = clean(params);
+
+  // ==================================================
+  // 1. ONLINE REQUEST
+  // ==================================================
+
+  if (isBrowserOnline()) {
+    const result = await baseQuery({
+      url,
+      method: "GET",
+      params: queryParams,
+    });
+
+    if (!result.error) {
+      const data = transform(result.data);
+
+      if (context) {
+        const cacheKey = buildCacheKey(
+          context,
+          url,
+          queryParams
+        );
+
+        await saveStaffCache(cacheKey, data);
+      }
+
+      return { data };
+    }
+
+    // Never bypass real backend errors.
+    if (!isNetworkFailure(result.error)) {
+      return {
+        error: result.error,
+      };
+    }
+  }
+
+  // ==================================================
+  // 2. OFFLINE CACHE
+  // ==================================================
+
+  if (!context) {
+    return {
+      error: offlineError(
+        "Offline staff information is unavailable for this account."
+      ),
+    };
+  }
+
+  const cacheKey = buildCacheKey(
+    context,
+    url,
+    queryParams
+  );
+
+  const cached = await readStaffCache(cacheKey);
+
+  if (cached) {
+    const data = cached.data;
+
+    if (
+      data &&
+      typeof data === "object" &&
+      !Array.isArray(data)
+    ) {
+      return {
+        data: {
+          ...data,
+          _offline: true,
+          _fromCache: true,
+          _cachedAt: cached.cachedAt,
+        },
+      };
+    }
+
+    return { data };
+  }
+
+  // ==================================================
+  // 3. NO CACHE
+  // ==================================================
+
+  return {
+    error: offlineError(
+      "Staff information has not been cached yet. Connect to the internet to load it."
+    ),
+  };
+}
+
+// ======================================================
+// ONLINE-ONLY STAFF MUTATIONS
+// ======================================================
+
+/**
+ * Staff and permission changes must be confirmed
+ * by the backend.
+ *
+ * These requests are never queued in IndexedDB.
+ */
+async function executeStaffMutation({
+  url,
+  method,
+  body,
+  baseQuery,
+}) {
+  if (!isBrowserOnline()) {
+    return {
+      error: offlineError(
+        "Internet connection is required to manage staff."
+      ),
+    };
+  }
+
+  return baseQuery({
+    url,
+    method,
+    body,
+  });
+}
+
+// ======================================================
+// STAFF API
+// ======================================================
 
 export const staffApi = baseApi.injectEndpoints({
   endpoints: (builder) => ({
+
+    // ==================================================
+    // GET STAFF LIST
+    // ==================================================
+
     getStaff: builder.query({
-      query: (params = {}) => ({ url: '/employees', method: 'GET', params: mapStaffParams(params) }),
-      transformResponse: toList,
-      providesTags: ['Staff'],
+      async queryFn(
+        params = {},
+        api,
+        _extraOptions,
+        baseQuery
+      ) {
+        return executeStaffRead({
+          url: "/employees",
+          params: mapStaffParams(params),
+          api,
+          baseQuery,
+          transform: toList,
+        });
+      },
+
+      providesTags: ["Staff"],
     }),
 
-    // { allowedPermissions, defaultEmployeePermissions, dataScopes } - drives the permission matrix
+    // ==================================================
+    // GET PERMISSION OPTIONS
+    // ==================================================
+
     getStaffOptions: builder.query({
-      query: () => ({ url: '/employees/permissions', method: 'GET' }),
-      transformResponse: (res) => unwrap(res),
-      providesTags: ['Staff'],
+      async queryFn(
+        _arg,
+        api,
+        _extraOptions,
+        baseQuery
+      ) {
+        return executeStaffRead({
+          url: "/employees/permissions",
+          api,
+          baseQuery,
+          transform: (response) => unwrap(response),
+        });
+      },
+
+      providesTags: ["Staff"],
     }),
+
+    // ==================================================
+    // GET SINGLE STAFF MEMBER
+    // ==================================================
 
     getStaffMember: builder.query({
-      query: (id) => ({ url: `/employees/${id}`, method: 'GET' }),
-      transformResponse: (res) => withId(unwrap(res)),
-      providesTags: (result, error, id) => ['Staff', { type: 'Staff', id }],
+      async queryFn(
+        id,
+        api,
+        _extraOptions,
+        baseQuery
+      ) {
+        return executeStaffRead({
+          url: `/employees/${id}`,
+          api,
+          baseQuery,
+          transform: (response) =>
+            withId(unwrap(response)),
+        });
+      },
+
+      providesTags: (result, error, id) => [
+        "Staff",
+        {
+          type: "Staff",
+          id,
+        },
+      ],
     }),
+
+    // ==================================================
+    // ADD STAFF - ONLINE ONLY
+    // ==================================================
 
     addStaff: builder.mutation({
-      query: (body) => ({ url: '/employees', method: 'POST', body: staffBody(body, true) }),
+      async queryFn(
+        body,
+        api,
+        _extraOptions,
+        baseQuery
+      ) {
+        return executeStaffMutation({
+          url: "/employees",
+          method: "POST",
+          body: staffBody(body, true),
+          baseQuery,
+        });
+      },
+
       invalidatesTags: STAFF_TAGS,
     }),
+
+    // ==================================================
+    // UPDATE STAFF - ONLINE ONLY
+    // ==================================================
 
     updateStaff: builder.mutation({
-      query: ({ id, ...body }) => ({ url: `/employees/${id}`, method: 'PATCH', body: staffBody(body, false) }),
+      async queryFn(
+        { id, ...body },
+        api,
+        _extraOptions,
+        baseQuery
+      ) {
+        return executeStaffMutation({
+          url: `/employees/${id}`,
+          method: "PATCH",
+          body: staffBody(body, false),
+          baseQuery,
+        });
+      },
+
       invalidatesTags: STAFF_TAGS,
     }),
 
-    // body: { permissions: string[], dataScope: 'own' | 'business' } - both required by the backend
+    // ==================================================
+    // UPDATE PERMISSIONS - ONLINE ONLY
+    // ==================================================
+
     updateStaffPermissions: builder.mutation({
-      query: ({ id, permissions, dataScope }) => ({ url: `/employees/${id}/permissions`, method: 'PATCH', body: { permissions, dataScope } }),
+      async queryFn(
+        { id, permissions, dataScope },
+        api,
+        _extraOptions,
+        baseQuery
+      ) {
+        return executeStaffMutation({
+          url: `/employees/${id}/permissions`,
+          method: "PATCH",
+          body: {
+            permissions,
+            dataScope,
+          },
+          baseQuery,
+        });
+      },
+
       invalidatesTags: STAFF_TAGS,
     }),
 
-    // body: { status: 'active' | 'disabled' }  (disabling also logs the employee out everywhere)
+    // ==================================================
+    // UPDATE STATUS - ONLINE ONLY
+    // ==================================================
+
     updateStaffStatus: builder.mutation({
-      query: ({ id, status }) => ({ url: `/employees/${id}/status`, method: 'PATCH', body: { status } }),
+      async queryFn(
+        { id, status },
+        api,
+        _extraOptions,
+        baseQuery
+      ) {
+        return executeStaffMutation({
+          url: `/employees/${id}/status`,
+          method: "PATCH",
+          body: { status },
+          baseQuery,
+        });
+      },
+
       invalidatesTags: STAFF_TAGS,
     }),
 
-    // body: { newPassword } - min 10 characters
+    // ==================================================
+    // RESET PASSWORD - ONLINE ONLY
+    // ==================================================
+
     resetStaffPassword: builder.mutation({
-      query: ({ id, newPassword }) => ({ url: `/employees/${id}/reset-password`, method: 'POST', body: { newPassword } }),
-      invalidatesTags: ['Staff', 'Auth'],
+      async queryFn(
+        { id, newPassword },
+        api,
+        _extraOptions,
+        baseQuery
+      ) {
+        return executeStaffMutation({
+          url: `/employees/${id}/reset-password`,
+          method: "POST",
+          body: { newPassword },
+          baseQuery,
+        });
+      },
+
+      invalidatesTags: [
+        "Staff",
+        "Auth",
+      ],
     }),
+
   }),
+
   overrideExisting: false,
 });
+
+// ======================================================
+// EXPORT EXISTING HOOKS
+// ======================================================
 
 export const {
   useGetStaffQuery,
   useLazyGetStaffQuery,
+
   useGetStaffOptionsQuery,
   useLazyGetStaffOptionsQuery,
+
   useGetStaffMemberQuery,
   useLazyGetStaffMemberQuery,
+
   useAddStaffMutation,
   useUpdateStaffMutation,
+
   useUpdateStaffPermissionsMutation,
   useUpdateStaffStatusMutation,
+
   useResetStaffPasswordMutation,
 } = staffApi;
