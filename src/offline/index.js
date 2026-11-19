@@ -1,73 +1,28 @@
 /**
- * src/offline/index.js
- *
- * Public entry point for the offline module.
- * Import everything you need from here:
- *
+ * src/offline/index.js — public entry point of the offline module.
  *   import { db, runSync, createOffline, carsCache } from "@/offline";
  */
-
-// ======================================================
-// DATABASE
-// ======================================================
 export { default as db } from "./db";
 export {
-  createLocalId,
-  isLocalId,
-  OUTBOX_STATUS,
-  OUTBOX_ACTIONS,
-  OUTBOX_ENTITIES,
-  tables,
+  createLocalId, isLocalId, OUTBOX_STATUS, OUTBOX_ACTIONS, OUTBOX_ENTITIES, tables,
+  getIdMap, getMappedId, requestPersistentStorage,
 } from "./db";
 
-// ======================================================
-// OUTBOX (offline mutations)
-// ======================================================
 export {
-  addToOutbox,
-  getPendingItems,
-  getPendingCount,
-  getOutboxItem,
-  markSyncing,
-  markSynced,
-  markFailed,
-  retryItem,
-  clearSyncedItems,
-  clearAllOutbox,
-  createOffline,
-  updateOffline,
-  deleteOffline,
+  addToOutbox, getPendingItems, getPendingCount, getHeldItems, hasPending, getOutboxItem,
+  markSyncing, markSynced, markFailed, retryItem, retryFailedItems, discardItem,
+  clearSyncedItems, clearAllOutbox, recoverInterruptedItems,
+  createOffline, updateOffline, deleteOffline, MAX_ATTEMPTS,
 } from "./outbox";
 
-// ======================================================
-// CACHE (read / write helpers)
-// ======================================================
 export {
-  getById,
-  getAll,
-  put,
-  bulkPut,
-  remove,
-  clearTable,
-  getByBusiness,
-  getByBusinessAndStatus,
-  // Specialized caches
-  carsCache,
-  bookingsCache,
-  customersCache,
-  driversCache,
-  paymentsCache,
-  expensesCache,
-  inspectionsCache,
-  settingsCache,
-  // Meta
-  getMeta,
-  setMeta,
-  getLastSyncAt,
-  setLastSyncAt,
+  getById, getAll, put, bulkPut, remove, clearTable, getByBusiness, getByBusinessAndStatus,
+  carsCache, bookingsCache, customersCache, driversCache, paymentsCache, expensesCache,
+  inspectionsCache, settingsCache, getMeta, setMeta, getLastSyncAt, setLastSyncAt,
 } from "./cache";
 
-// ======================================================
-// SYNC ENGINE
-// ======================================================
-export { runSync, syncIfNeeded } from "./syncEngine";
+export { runSync, syncIfNeeded, probeBackend } from "./syncEngine";
+export { clearSnapshots } from "./queryCache";
+export {
+  resolveContext, markVerified, isWithinOfflineWindow, OFFLINE_SESSION_DAYS,
+} from "./session";

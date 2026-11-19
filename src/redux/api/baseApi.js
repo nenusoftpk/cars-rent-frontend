@@ -1,27 +1,32 @@
-import {
-  createApi,
-  fetchBaseQuery,
-} from "@reduxjs/toolkit/query/react";
+import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 
 import { sessionExpired } from "../slices/authSlice";
+import { setPending } from "../slices/syncSlice";
 
 import {
   executeOffline,
   isNetworkFailure,
   isBrowserOnline,
+  supportsOfflineAction,
+  getOfflineRecordStatus,
 } from "@/offline/offlineAdapter";
+import { classifyRequest, rewriteRequestId, normalizePath } from "@/offline/routes";
+import { resolveContext, markVerified, isWithinOfflineWindow } from "@/offline/session";
+import {
+  saveSnapshot, readSnapshot, dropSnapshot, dropStaleSnapshots, isHydrated, mergeServerRecords,
+} from "@/offline/queryCache";
+import { TABLE } from "@/offline/localQuries";
+import { getMappedId, isLocalId } from "@/offline/db";
+import { getPendingCount, hasPending } from "@/offline/outbox";
+import { getMeta } from "@/offline/cache";
 
 // ======================================================
 // CONFIGURATION
 // ======================================================
 
-const USE_MOCK =
-  process.env.NEXT_PUBLIC_USE_MOCK === "true";
+const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK === "true";
 
-const API_URL = (
-  process.env.NEXT_PUBLIC_API_URL ||
-  "http://localhost:8000/api/v1"
-).replace(/\/+$/, "");
+const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1").replace(/\/+$/, "");
 
 const AUTH_STORAGE_KEY = "rac_auth";
 
@@ -31,25 +36,17 @@ const AUTH_STORAGE_KEY = "rac_auth";
 
 const realBaseQuery = fetchBaseQuery({
   baseUrl: API_URL,
-
   prepareHeaders: (headers, { getState }) => {
     const token = getState()?.auth?.token;
-
-    if (token) {
-      headers.set("Authorization", `Bearer ${token}`);
-    } else {
-      headers.delete("Authorization");
-    }
-
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+    else headers.delete("Authorization");
     headers.set("Accept", "application/json");
-
-    // fetchBaseQuery handles JSON and FormData.
-    return headers;
+    return headers; // fetchBaseQuery handles JSON and FormData
   },
 });
 
 // ======================================================
-// BACKEND RESPONSE UNWRAPPING
+// BACKEND RESPONSE UNWRAPPING (unchanged)
 // ======================================================
 
 const unwrapResponse = (response) => {
@@ -57,29 +54,17 @@ const unwrapResponse = (response) => {
     response &&
     typeof response === "object" &&
     !Array.isArray(response) &&
-    Object.prototype.hasOwnProperty.call(
-      response,
-      "data"
-    ) &&
-    (
-      Object.prototype.hasOwnProperty.call(
-        response,
-        "success"
-      ) ||
-      Object.prototype.hasOwnProperty.call(
-        response,
-        "message"
-      )
-    )
+    Object.prototype.hasOwnProperty.call(response, "data") &&
+    (Object.prototype.hasOwnProperty.call(response, "success") ||
+      Object.prototype.hasOwnProperty.call(response, "message"))
   ) {
     return response.data;
   }
-
   return response;
 };
 
 // ======================================================
-// PUBLIC AUTH ROUTES
+// PUBLIC AUTH ROUTES (unchanged)
 // ======================================================
 
 const PUBLIC_AUTH_ROUTES = new Set([
@@ -90,40 +75,10 @@ const PUBLIC_AUTH_ROUTES = new Set([
   "/auth/verify-email",
 ]);
 
-const normalizePath = (url) => {
-  const raw = String(url || "");
-
-  try {
-    const parsed = new URL(
-      raw,
-      "http://localhost"
-    );
-
-    return (
-      parsed.pathname
-        .replace(/^\/api\/v1(?=\/|$)/, "")
-        .replace(/\/+$/, "") || "/"
-    );
-  } catch {
-    return (
-      raw
-        .split("?")[0]
-        .replace(/^\/api\/v1(?=\/|$)/, "")
-        .replace(/\/+$/, "") || "/"
-    );
-  }
-};
-
-const isPublicAuthRequest = (url) =>
-  PUBLIC_AUTH_ROUTES.has(normalizePath(url));
-
-// ======================================================
-// SESSION STORAGE
-// ======================================================
+const isPublicAuthRequest = (url) => PUBLIC_AUTH_ROUTES.has(normalizePath(url));
 
 const removeSavedSession = () => {
   if (typeof window === "undefined") return;
-
   try {
     localStorage.removeItem(AUTH_STORAGE_KEY);
   } catch {
@@ -132,365 +87,202 @@ const removeSavedSession = () => {
 };
 
 // ======================================================
-// OFFLINE ROUTE CONFIGURATION
+// OFFLINE SERVING
 // ======================================================
 
-/**
- * Only explicitly supported endpoints can use IndexedDB.
- *
- * Do not automatically intercept:
- * - Authentication
- * - Subscription management
- * - Platform administration
- * - Payments
- * - Financial transactions
- * - File uploads
- * - Special booking actions
- *
- * Other APIs continue using the backend normally.
- */
+const adminFilter = (ctx) => (record) => String(record.businessId) === ctx.businessId;
 
-const OFFLINE_RESOURCES = Object.freeze({
-  cars: "car",
-  customers: "customer",
-  bookings: "booking",
+const unavailable = (message) => ({
+  error: {
+    status: "FETCH_ERROR",
+    error: message,
+    data: { success: false, message },
+  },
 });
 
-const OFFLINE_METHODS = new Set([
-  "GET",
-  "POST",
-  "PATCH",
-  "PUT",
-  "DELETE",
-]);
+const NOT_DOWNLOADED = "This data has not been saved on this device yet. Open it once while online.";
+const EXPIRED = "Offline access has expired. Connect to the internet and sign in again.";
 
-const OFFLINE_WRITES = Object.freeze({
-  car: new Set(["create", "update", "delete"]),
-  customer: new Set(["create", "update", "delete"]),
-  booking: new Set(["create", "update"]),
-});
-
-// ======================================================
-// OFFLINE REQUEST MATCHING
-// ======================================================
-
-function parseOfflineRequest(args) {
-  const request =
-    typeof args === "string"
-      ? { url: args, method: "GET" }
-      : args || {};
-
-  const method = String(
-    request.method || "GET"
-  ).toUpperCase();
-
-  if (!OFFLINE_METHODS.has(method)) {
-    return null;
-  }
-
-  const rawUrl = String(request.url || "");
-
-const path = normalizePath(rawUrl);
-
-let queryString = "";
-
-try {
-  queryString = new URL(
-    rawUrl,
-    "http://localhost"
-  ).search.slice(1);
-} catch {
-  queryString = rawUrl.split("?")[1] || "";
+async function offlineAllowed(ctx) {
+  const lastSync = await getMeta(`lastSyncAt:${ctx.businessId}`);
+  return isWithinOfflineWindow(ctx.userId, lastSync ? Date.parse(lastSync) : 0);
 }
 
-  const segments = path.split("/").filter(Boolean);
+async function serveRead(route, ctx) {
+  if (!(await offlineAllowed(ctx))) return unavailable(EXPIRED);
 
-  if (!segments.length || segments.length > 2) {
-    return null;
+  const local = Boolean(route.entity) && ctx.isAdmin;
+
+  if (local) {
+    const table = TABLE[route.entity];
+    const base = { entity: route.entity, businessId: ctx.businessId, accessFilter: adminFilter(ctx) };
+
+    if (route.action === "list") {
+      const pending = await hasPending(ctx.businessId, route.entity);
+      // Exact server answer when nothing is waiting to sync; otherwise local data incl. pending rows.
+      if (!pending) {
+        const snap = await readSnapshot(ctx, route);
+        if (snap) return { data: snap.data };
+      }
+      if (await isHydrated(ctx.businessId, table)) {
+        return executeOffline({ ...base, action: "list", params: route.params });
+      }
+      const snap = await readSnapshot(ctx, route);
+      if (snap) return { data: snap.data };
+      return pending ? executeOffline({ ...base, action: "list", params: route.params }) : unavailable(NOT_DOWNLOADED);
+    }
+
+    if (route.action === "get") {
+      const status = await getOfflineRecordStatus({ entity: route.entity, businessId: ctx.businessId, id: route.id });
+      if (isLocalId(route.id) || status.pending) {
+        return executeOffline({ ...base, action: "get", id: route.id });
+      }
+      const snap = await readSnapshot(ctx, route);
+      if (snap) return { data: snap.data };
+      const result = await executeOffline({ ...base, action: "get", id: route.id });
+      return result.error ? unavailable(NOT_DOWNLOADED) : result;
+    }
   }
 
-  const entity = OFFLINE_RESOURCES[segments[0]];
-
-  if (!entity) return null;
-
-  const id = segments[1] || null;
-
-  const params = {
-    ...Object.fromEntries(
-      new URLSearchParams(queryString)
-    ),
-    ...(request.params || {}),
-  };
-
-  let action = null;
-
-  if (method === "GET") {
-    action = id ? "get" : "list";
-  } else if (method === "POST" && !id) {
-    action = "create";
-  } else if (
-    (method === "PATCH" || method === "PUT") &&
-    id
-  ) {
-    action = "update";
-  } else if (method === "DELETE" && id) {
-    action = "delete";
-  }
-
-  if (!action) return null;
-
-  // Bookings cannot be deleted through the generic
-  // adapter. Cancellation uses a special backend route.
-  if (
-    action !== "list" &&
-    action !== "get" &&
-    !OFFLINE_WRITES[entity]?.has(action)
-  ) {
-    return null;
-  }
-
-  return {
-    entity,
-    action,
-    id,
-    params,
-    payload: request.body,
-  };
+  const snap = await readSnapshot(ctx, route);
+  return snap ? { data: snap.data } : unavailable(NOT_DOWNLOADED);
 }
 
-// ======================================================
-// AUTHENTICATED OFFLINE CONTEXT
-// ======================================================
+async function serveWrite(route, ctx, api) {
+  if (!(await offlineAllowed(ctx))) return unavailable(EXPIRED);
 
-/**
- * Offline access must be restricted to authenticated
- * users and their permitted records.
- *
- * This version deliberately requires an explicit
- * permission filter. It does not use () => true,
- * because that could expose another employee's data.
- *
- * Your authSlice must provide:
- * - auth.businessId OR auth.user.businessId
- * - auth.user.role
- * - auth.user.dataScope / permissions
- *
- * For now, only admins can use offline data.
- * Employee offline access requires a verified
- * employee-specific permission filter.
- */
-
-function getOfflineContext(api) {
-  const state = api.getState();
-  const auth = state?.auth || {};
-
-  const user = auth.user || {};
-
-  const businessId =
-    auth.businessId ||
-    user.businessId ||
-    user.business?._id ||
-    user.business?.id ||
-    null;
-
-  const token = auth.token;
-
-  if (!token || !businessId) {
-    return null;
-  }
-
-  // This is intentionally conservative.
-  // Platform super-admins must not access tenant
-  // data through an unrestricted local cache.
-  if (user.role !== "admin") {
-    return null;
-  }
-
-  return {
-    businessId: String(
-      businessId?._id ||
-      businessId?.id ||
-      businessId
-    ),
-    accessFilter: (record) =>
-      String(record.businessId) ===
-      String(
-        businessId?._id ||
-        businessId?.id ||
-        businessId
-      ),
-  };
-}
-
-// ======================================================
-// OFFLINE REQUEST EXECUTION
-// ======================================================
-
-async function tryOfflineRequest(args, api) {
-  const route = parseOfflineRequest(args);
-
-  if (!route) return null;
-
-  const context = getOfflineContext(api);
-
-  if (!context) return null;
-
-  return executeOffline({
-    ...route,
-    businessId: context.businessId,
-    accessFilter: context.accessFilter,
+  const result = await executeOffline({
+    action: route.action,
+    entity: route.entity,
+    businessId: ctx.businessId,
+    id: route.id,
+    payload: route.body,
+    accessFilter: adminFilter(ctx),
   });
+
+  if (!result.error) {
+    api.dispatch(setPending(await getPendingCount(ctx.businessId)));
+  }
+  return result;
 }
+
+/**
+ * @returns a baseQuery result, or null when the request is not served locally.
+ * Never converts authentication/permission/validation/server errors into success.
+ */
+async function serveOffline(route, ctx, api) {
+  try {
+    if (route.method === "GET") return await serveRead(route, ctx);
+    if (route.entity && ctx.isAdmin && supportsOfflineAction(route.entity, route.action)) {
+      return await serveWrite(route, ctx, api);
+    }
+    return null; // online-only mutation (payments, cancel, issue/return, uploads...)
+  } catch {
+    return null; // IndexedDB unavailable: behave exactly like before
+  }
+}
+
+const quietly = (promise) => promise.catch(() => {});
 
 // ======================================================
 // BASE QUERY WITH OFFLINE SUPPORT
 // ======================================================
 
-const baseQuery = async (
-  args,
-  api,
-  extraOptions
-) => {
-  const requestToken =
-    api.getState()?.auth?.token ?? null;
+const baseQuery = async (args, api, extraOptions) => {
+  const requestToken = api.getState()?.auth?.token ?? null;
+  const url = typeof args === "string" ? args : args?.url || "";
 
-  const url =
-    typeof args === "string"
-      ? args
-      : args?.url || "";
+  // ---------------- mock mode (unchanged behaviour) ----------------
+  if (USE_MOCK) {
+    const { mockBaseQuery } = await import("@/services/mockBaseQuery");
+    const mocked = await mockBaseQuery(args, api, extraOptions);
+    return handleExpiredSession(mocked, url, requestToken, api);
+  }
 
-  const offlineRoute = parseOfflineRequest(args);
+  const ctx = resolveContext(api.getState());
+  let route = ctx ? classifyRequest(args) : null;
 
-  const queryFn = USE_MOCK
-    ? (
-        await import(
-          "@/services/mockBaseQuery"
-        )
-      ).mockBaseQuery
-    : realBaseQuery;
-
-  // ==================================================
-  // 1. OFFLINE FIRST WHEN DISCONNECTED
-  // ==================================================
-
-  if (
-    !USE_MOCK &&
-    !isBrowserOnline() &&
-    offlineRoute
-  ) {
-    const offlineResult =
-      await tryOfflineRequest(args, api);
-
-    if (offlineResult) {
-      return offlineResult;
+  // ---------------- records that only exist locally (temp IDs) ----------------
+  if (route?.entity && route.id && isLocalId(route.id)) {
+    const mapped = await getMappedId(ctx.businessId, route.id).catch(() => null);
+    if (mapped) {
+      args = rewriteRequestId(args, route.id, mapped); // already synced: talk to the server with the real ID
+      route = classifyRequest(args);
+    } else {
+      const local = await serveOffline(route, ctx, api); // still pending: serve from the device
+      if (local) return local;
     }
   }
 
-  // ==================================================
-  // 2. NORMAL ONLINE REQUEST
-  // ==================================================
+  // ---------------- 1. browser reports offline ----------------
+  if (route && !isBrowserOnline()) {
+    const local = await serveOffline(route, ctx, api);
+    if (local) return local;
+  }
 
-  const result = await queryFn(
-    args,
-    api,
-    extraOptions
-  );
+  // ---------------- 2. normal online request ----------------
+  const result = await realBaseQuery(args, api, extraOptions);
 
-  // ==================================================
-  // 3. UNWRAP SUCCESSFUL RESPONSE
-  // ==================================================
-
-  if (
-    result.data !== undefined &&
-    !USE_MOCK
-  ) {
+  if (result.data !== undefined) {
     result.data = unwrapResponse(result.data);
-  }
 
-  // ==================================================
-  // 4. NETWORK FAILURE FALLBACK
-  // ==================================================
+    if (ctx) {
+      markVerified(ctx.userId);
+      const method = String((typeof args === "object" && args?.method) || "GET").toUpperCase();
 
-  if (
-    !USE_MOCK &&
-    result.error &&
-    isNetworkFailure(result.error) &&
-    offlineRoute
-  ) {
-    const offlineResult =
-      await tryOfflineRequest(args, api);
-
-    if (offlineResult) {
-      return offlineResult;
+      if (method === "GET" && route?.snapshotable) {
+        quietly(saveSnapshot(ctx, route, result.data));
+        if (route.action === "list" && ctx.isAdmin) {
+          const items = Array.isArray(result.data) ? result.data : result.data?.items;
+          if (Array.isArray(items) && items.length) {
+            quietly(mergeServerRecords(TABLE[route.entity], items, ctx.businessId));
+          }
+        }
+      } else if (method !== "GET" && !isPublicAuthRequest(url)) {
+        quietly(dropStaleSnapshots(ctx)); // server data changed: old snapshots may now be wrong
+      }
     }
   }
 
-  // ==================================================
-  // 5. HANDLE EXPIRED JWT
-  // ==================================================
-
-  const isUnauthorized =
-    result.error?.status === 401;
-
-  const isPublicRequest =
-    isPublicAuthRequest(url);
-
-  const currentToken =
-    api.getState()?.auth?.token ?? null;
-
-  const sameSession =
-    Boolean(requestToken) &&
-    requestToken === currentToken;
-
-  if (
-    isUnauthorized &&
-    !isPublicRequest &&
-    sameSession
-  ) {
-    api.dispatch(sessionExpired());
-
-    removeSavedSession();
-
-    api.dispatch(
-      baseApi.util.resetApiState()
-    );
+  // revoked access must not keep being served from an old snapshot
+  if (ctx && route?.snapshotable && result.error?.status === 403) {
+    quietly(dropSnapshot(ctx, route));
   }
 
-  return result;
+  // ---------------- 3. backend unreachable although navigator.onLine is true ----------------
+  if (route && result.error && isNetworkFailure(result.error)) {
+    const local = await serveOffline(route, ctx, api);
+    if (local) return local;
+  }
+
+  return handleExpiredSession(result, url, requestToken, api);
 };
+
+// ---------------- 4. expired JWT (unchanged behaviour) ----------------
+function handleExpiredSession(result, url, requestToken, api) {
+  const isUnauthorized = result.error?.status === 401;
+  const currentToken = api.getState()?.auth?.token ?? null;
+  const sameSession = Boolean(requestToken) && requestToken === currentToken;
+
+  if (isUnauthorized && !isPublicAuthRequest(url) && sameSession) {
+    api.dispatch(sessionExpired());
+    removeSavedSession();
+    api.dispatch(baseApi.util.resetApiState());
+    // NOTE: IndexedDB and the outbox are intentionally NOT cleared.
+  }
+  return result;
+}
 
 // ======================================================
 // RTK QUERY CACHE TAGS
 // ======================================================
 
 export const TAGS = [
-  "Auth",
-
-  "Business",
-  "Subscriptions",
-  "Platform",
-
-  "Customers",
-  "Cars",
-  "Bookings",
-  "Payments",
-  "Expenses",
-  "Drivers",
-  "Staff",
-  "Inspections",
-
-  "Reminders",
-  "Notifications",
-  "Documents",
-  "Backups",
-
-  "Settings",
-  "Reports",
-  "Dashboard",
-  "Sessions",
-
-  "Profits",
-  "Ledger",
+  "Auth", "Business", "Subscriptions", "Platform",
+  "Customers", "Cars", "Bookings", "Payments", "Expenses", "Drivers", "Staff", "Inspections",
+  "Reminders", "Notifications", "Documents", "Backups",
+  "Settings", "Reports", "Dashboard", "Sessions",
+  "Profits", "Ledger",
 ];
 
 // ======================================================
@@ -499,140 +291,67 @@ export const TAGS = [
 
 export const baseApi = createApi({
   reducerPath: "api",
-
   baseQuery,
-
   tagTypes: TAGS,
-
   endpoints: () => ({}),
-
   keepUnusedDataFor: 60,
-
   refetchOnReconnect: true,
-
   refetchOnFocus: true,
 });
 
 // ======================================================
-// CLEAN QUERY PARAMETERS
+// CLEAN QUERY PARAMETERS (unchanged)
 // ======================================================
 
 export const clean = (params = {}) => {
-  if (
-    !params ||
-    typeof params !== "object" ||
-    Array.isArray(params)
-  ) {
-    return {};
-  }
-
+  if (!params || typeof params !== "object" || Array.isArray(params)) return {};
   return Object.fromEntries(
     Object.entries(params).filter(
-      ([, value]) =>
-        value !== "" &&
-        value !== null &&
-        value !== undefined &&
-        value !== "all"
+      ([, value]) => value !== "" && value !== null && value !== undefined && value !== "all"
     )
   );
 };
 
 // ======================================================
-// API ERROR MESSAGE HELPER
+// API ERROR MESSAGE HELPER (unchanged)
 // ======================================================
 
-export const errorMessage = (
-  error,
-  fallback = "Something went wrong. Please try again."
-) => {
+export const errorMessage = (error, fallback = "Something went wrong. Please try again.") => {
   if (!error) return fallback;
 
   const data = error?.data;
 
-  if (
-    typeof data?.message === "string" &&
-    data.message.trim()
-  ) {
-    return data.message;
-  }
-
-  if (
-    typeof data?.error === "string" &&
-    data.error.trim()
-  ) {
-    return data.error;
-  }
+  if (typeof data?.message === "string" && data.message.trim()) return data.message;
+  if (typeof data?.error === "string" && data.error.trim()) return data.error;
 
   if (Array.isArray(data?.errors)) {
     const firstError = data.errors[0];
-
-    if (typeof firstError === "string") {
-      return firstError;
-    }
-
-    if (
-      typeof firstError?.message === "string"
-    ) {
-      return firstError.message;
-    }
+    if (typeof firstError === "string") return firstError;
+    if (typeof firstError?.message === "string") return firstError.message;
   }
 
   if (Array.isArray(data?.details)) {
     const firstDetail = data.details[0];
-
-    if (
-      typeof firstDetail?.message === "string"
-    ) {
-      return firstDetail.message;
-    }
+    if (typeof firstDetail?.message === "string") return firstDetail.message;
   }
 
-  if (error.status === "FETCH_ERROR") {
-    return "Unable to connect to the server. Please check your internet connection.";
-  }
-
-  if (error.status === "TIMEOUT_ERROR") {
-    return "The server is taking too long to respond. Please try again.";
-  }
-
-  if (error.status === "PARSING_ERROR") {
-    return "The server returned an invalid response.";
-  }
+  if (error.status === "FETCH_ERROR") return "Unable to connect to the server. Please check your internet connection.";
+  if (error.status === "TIMEOUT_ERROR") return "The server is taking too long to respond. Please try again.";
+  if (error.status === "PARSING_ERROR") return "The server returned an invalid response.";
 
   switch (error.status) {
-    case 400:
-      return "Invalid request. Please check the provided information.";
-
-    case 401:
-      return "Your session has expired. Please log in again.";
-
-    case 403:
-      return "You do not have permission to perform this action.";
-
-    case 404:
-      return "The requested resource was not found.";
-
-    case 409:
-      return "This information already exists or conflicts with another record.";
-
-    case 413:
-      return "The uploaded file is too large.";
-
-    case 422:
-      return "Please check the information and try again.";
-
-    case 429:
-      return "Too many requests. Please try again later.";
-
-    case 500:
-      return "A server error occurred. Please try again later.";
-
+    case 400: return "Invalid request. Please check the provided information.";
+    case 401: return "Your session has expired. Please log in again.";
+    case 403: return "You do not have permission to perform this action.";
+    case 404: return "The requested resource was not found.";
+    case 409: return "This information already exists or conflicts with another record.";
+    case 413: return "The uploaded file is too large.";
+    case 422: return "Please check the information and try again.";
+    case 429: return "Too many requests. Please try again later.";
+    case 500: return "A server error occurred. Please try again later.";
     case 502:
     case 503:
-    case 504:
-      return "The server is temporarily unavailable. Please try again later.";
-
-    default:
-      return fallback;
+    case 504: return "The server is temporarily unavailable. Please try again later.";
+    default: return fallback;
   }
 };

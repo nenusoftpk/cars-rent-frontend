@@ -6,6 +6,7 @@ import { Toaster } from "sonner";
 
 import { makeStore } from "./store";
 import { hydrate } from "./slices/authSlice";
+import { jwtExpiryMs, canKeepExpiredSession } from "@/offline/session";
 
 const STORAGE_KEY = "rac_auth";
 
@@ -13,15 +14,11 @@ const STORAGE_KEY = "rac_auth";
 // LOAD SAVED SESSION
 // ======================================================
 
-
 const readSession = () => {
-  if (typeof window === "undefined") {
-    return null;
-  }
+  if (typeof window === "undefined") return null;
 
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-
     if (!raw) return null;
 
     const parsed = JSON.parse(raw);
@@ -37,43 +34,28 @@ const readSession = () => {
       return null;
     }
 
-    // Check JWT expiry without treating this as
-    // verification of the token's authenticity.
-    const parts = parsed.token.split(".");
+    // Expiry is read from the JWT payload. This is NOT verification of authenticity.
+    const expiresAt = jwtExpiryMs(parsed.token);
 
-    if (parts.length !== 3) {
-      return null;
-    }
+    if (expiresAt === null) return null;
 
-    const payload = JSON.parse(
-      atob(
-        parts[1]
-          .replace(/-/g, "+")
-          .replace(/_/g, "/")
-          .padEnd(
-            Math.ceil(parts[1].length / 4) * 4,
-            "="
-          )
-      )
-    );
-
-    if (
-      typeof payload.exp !== "number" ||
-      payload.exp * 1000 <= Date.now()
-    ) {
+    if (expiresAt <= Date.now()) {
+      // OFFLINE SESSION POLICY (see src/offline/session.js):
+      // an expired token is only kept while the browser is offline AND the user was verified
+      // by the server within OFFLINE_SESSION_DAYS. The token is never renewed locally; the
+      // first request that reaches the server gets a 401 and the normal logout flow runs.
+      if (canKeepExpiredSession(parsed.user)) {
+        return { token: parsed.token, user: parsed.user };
+      }
       localStorage.removeItem(STORAGE_KEY);
       return null;
     }
 
-    return {
-      token: parsed.token,
-      user: parsed.user,
-    };
+    return { token: parsed.token, user: parsed.user };
   } catch {
     return null;
   }
 };
-
 
 // ======================================================
 // REDUX PROVIDER
@@ -87,9 +69,7 @@ export default function ReduxProvider({ children }) {
   }
 
   useEffect(() => {
-    const session = readSession();
-
-    storeRef.current.dispatch(hydrate(session));
+    storeRef.current.dispatch(hydrate(readSession()));
   }, []);
 
   return (
@@ -100,11 +80,7 @@ export default function ReduxProvider({ children }) {
         position="top-right"
         richColors
         closeButton
-        toastOptions={{
-          style: {
-            fontFamily: "inherit",
-          },
-        }}
+        toastOptions={{ style: { fontFamily: "inherit" } }}
       />
     </Provider>
   );

@@ -1,241 +1,46 @@
 /**
  * src/offline/db.js
  *
- * Dexie (IndexedDB) schema for offline-first Rent-a-Car system.
+ * Dexie schema for RentACarOfflineDB.
  *
- * Design goals:
- * - Store the same shapes the frontend already uses (after mapBooking, mapCar, etc.)
- * - Support offline create / update / delete via an outbox
- * - Fast filtering by businessId, status, dates, search fields
- * - Easy sync later (pull from MongoDB → put into these tables)
+ * - Version 1 is UNCHANGED (all existing tables, indexes and records are preserved).
+ * - Version 2 only ADDS `queryCache` (tenant + user scoped API snapshots).
+ * - This database is never deleted or recreated by refresh, navigation, logout or sync.
  */
-
 import Dexie from "dexie";
-
-// ======================================================
-// DATABASE
-// ======================================================
 
 export const db = new Dexie("RentACarOfflineDB");
 
-/**
- * Version 1 – Initial offline schema
- *
- * Primary key is always `id` (string).
- * We store both the real MongoDB _id (as id) and keep businessId for multi-tenant isolation.
- */
 db.version(1).stores({
-  // --------------------------------------------------
-  // CARS
-  // --------------------------------------------------
-  cars: `
-    id,
-    businessId,
-    status,
-    numberPlate,
-    brand,
-    model,
-    fuelType,
-    transmission,
-    dailyRent,
-    hourlyRent,
-    nextServiceDate,
-    nextOilChangeDate,
-    insuranceExpiry,
-    registrationExpiry,
-    tokenTaxExpiry,
-    updatedAt,
-    [businessId+status],
-    [businessId+numberPlate]
-  `,
+  cars: "id, businessId, status, numberPlate, brand, model, fuelType, transmission, dailyRent, hourlyRent, nextServiceDate, nextOilChangeDate, insuranceExpiry, registrationExpiry, tokenTaxExpiry, updatedAt, [businessId+status], [businessId+numberPlate]",
+  bookings: "id, businessId, status, customerId, carId, driverId, employeeId, bookingNumber, invoiceNumber, pickupDate, returnDate, createdAt, updatedAt, [businessId+status], [businessId+customerId], [businessId+carId], [businessId+driverId], [businessId+pickupDate], [businessId+returnDate]",
+  customers: "id, businessId, name, phone, email, cnic, customerCode, status, type, city, createdAt, updatedAt, [businessId+status], [businessId+phone], [businessId+cnic], [businessId+customerCode]",
+  drivers: "id, businessId, name, phone, status, paymentType, licenseExpiry, createdAt, updatedAt, [businessId+status], [businessId+name]",
+  payments: "id, businessId, bookingId, type, method, status, paymentNumber, idempotencyKey, paymentDate, amount, createdAt, updatedAt, [businessId+bookingId], [businessId+type], [businessId+status], [businessId+paymentDate], [businessId+idempotencyKey]",
+  expenses: "id, businessId, category, carId, bookingId, driverId, expenseDate, amount, paymentMethod, createdAt, updatedAt, [businessId+category], [businessId+carId], [businessId+bookingId], [businessId+driverId], [businessId+expenseDate]",
+  inspections: "id, businessId, bookingId, carId, type, inspectionDate, createdAt, updatedAt, [businessId+bookingId], [businessId+carId], [businessId+type], [businessId+bookingId+type]",
+  settings: "id, businessId, updatedAt",
+  outbox: "++id, entity, action, status, businessId, localId, serverId, createdAt, updatedAt, attempts, [entity+status], [businessId+status], [status+createdAt]",
+  meta: "key",
+});
 
-  // --------------------------------------------------
-  // BOOKINGS
-  // --------------------------------------------------
-  bookings: `
-    id,
-    businessId,
-    status,
-    customerId,
-    carId,
-    driverId,
-    employeeId,
-    bookingNumber,
-    invoiceNumber,
-    pickupDate,
-    returnDate,
-    createdAt,
-    updatedAt,
-    [businessId+status],
-    [businessId+customerId],
-    [businessId+carId],
-    [businessId+driverId],
-    [businessId+pickupDate],
-    [businessId+returnDate]
-  `,
-
-  // --------------------------------------------------
-  // CUSTOMERS
-  // --------------------------------------------------
-  customers: `
-    id,
-    businessId,
-    name,
-    phone,
-    email,
-    cnic,
-    customerCode,
-    status,
-    type,
-    city,
-    createdAt,
-    updatedAt,
-    [businessId+status],
-    [businessId+phone],
-    [businessId+cnic],
-    [businessId+customerCode]
-  `,
-
-  // --------------------------------------------------
-  // DRIVERS
-  // --------------------------------------------------
-  drivers: `
-    id,
-    businessId,
-    name,
-    phone,
-    status,
-    paymentType,
-    licenseExpiry,
-    createdAt,
-    updatedAt,
-    [businessId+status],
-    [businessId+name]
-  `,
-
-  // --------------------------------------------------
-  // PAYMENTS
-  // --------------------------------------------------
-  payments: `
-    id,
-    businessId,
-    bookingId,
-    type,
-    method,
-    status,
-    paymentNumber,
-    idempotencyKey,
-    paymentDate,
-    amount,
-    createdAt,
-    updatedAt,
-    [businessId+bookingId],
-    [businessId+type],
-    [businessId+status],
-    [businessId+paymentDate],
-    [businessId+idempotencyKey]
-  `,
-
-  // --------------------------------------------------
-  // EXPENSES
-  // --------------------------------------------------
-  expenses: `
-    id,
-    businessId,
-    category,
-    carId,
-    bookingId,
-    driverId,
-    expenseDate,
-    amount,
-    paymentMethod,
-    createdAt,
-    updatedAt,
-    [businessId+category],
-    [businessId+carId],
-    [businessId+bookingId],
-    [businessId+driverId],
-    [businessId+expenseDate]
-  `,
-
-  // --------------------------------------------------
-  // CAR INSPECTIONS (issue / return)
-  // --------------------------------------------------
-  inspections: `
-    id,
-    businessId,
-    bookingId,
-    carId,
-    type,
-    inspectionDate,
-    createdAt,
-    updatedAt,
-    [businessId+bookingId],
-    [businessId+carId],
-    [businessId+type],
-    [businessId+bookingId+type]
-  `,
-
-  // --------------------------------------------------
-  // SETTINGS (one record per business)
-  // --------------------------------------------------
-  settings: `
-    id,
-    businessId,
-    updatedAt
-  `,
-
-  // --------------------------------------------------
-  // OUTBOX – heart of offline mutations
-  // --------------------------------------------------
-  // Every create / update / delete performed while offline
-  // is stored here and later pushed to the server.
-  outbox: `
-    ++id,
-    entity,
-    action,
-    status,
-    businessId,
-    localId,
-    serverId,
-    createdAt,
-    updatedAt,
-    attempts,
-    [entity+status],
-    [businessId+status],
-    [status+createdAt]
-  `,
-
-  // --------------------------------------------------
-  // META – sync state, schema version, flags
-  // --------------------------------------------------
-  meta: `
-    key
-  `,
+// v2: additive only. Tables not listed here are inherited unchanged from v1.
+db.version(2).stores({
+  queryCache: "key, businessId, userId, path, updatedAt, [businessId+userId]",
 });
 
 // ======================================================
-// HELPERS (optional but very useful)
+// ID HELPERS
 // ======================================================
 
-/**
- * Generate a temporary local ID for offline-created records.
- * Format: local_<timestamp>_<random>
- */
 export function createLocalId(prefix = "local") {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 }
 
-/**
- * Check if an ID is a temporary local ID
- */
 export function isLocalId(id) {
   return typeof id === "string" && id.startsWith("local_");
 }
 
-/**
- * Standard outbox statuses
- */
 export const OUTBOX_STATUS = {
   PENDING: "pending",
   SYNCING: "syncing",
@@ -243,32 +48,38 @@ export const OUTBOX_STATUS = {
   SYNCED: "synced",
 };
 
-/**
- * Supported entities that can be mutated offline
- */
 export const OUTBOX_ENTITIES = [
-  "car",
-  "booking",
-  "customer",
-  "driver",
-  "payment",
-  "expense",
-  "inspection",
-  "settings",
+  "car", "booking", "customer", "driver", "payment", "expense", "inspection", "settings",
 ];
 
-/**
- * Supported actions
- */
-export const OUTBOX_ACTIONS = {
-  CREATE: "create",
-  UPDATE: "update",
-  DELETE: "delete",
-};
+export const OUTBOX_ACTIONS = { CREATE: "create", UPDATE: "update", DELETE: "delete" };
 
 // ======================================================
-// CONVENIENCE ACCESSORS
+// PERSISTENT TEMP-ID -> SERVER-ID MAP (per business, stored in meta)
 // ======================================================
+
+export const idMapKey = (businessId) => `sync:idmap:${businessId}`;
+
+export async function getIdMap(businessId) {
+  const row = await db.meta.get(idMapKey(businessId));
+  return row?.value || {};
+}
+
+export async function getMappedId(businessId, localId) {
+  return (await getIdMap(businessId))[localId] || null;
+}
+
+/** Ask the browser not to evict IndexedDB under storage pressure. Safe to call repeatedly. */
+export async function requestPersistentStorage() {
+  try {
+    if (typeof navigator !== "undefined" && navigator.storage?.persist) {
+      return await navigator.storage.persist();
+    }
+  } catch {
+    // ignore
+  }
+  return false;
+}
 
 export const tables = {
   cars: db.cars,
@@ -281,10 +92,7 @@ export const tables = {
   settings: db.settings,
   outbox: db.outbox,
   meta: db.meta,
+  queryCache: db.queryCache,
 };
-
-// ======================================================
-// DEFAULT EXPORT
-// ======================================================
 
 export default db;
