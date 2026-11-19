@@ -1,5 +1,6 @@
 import '@/styles/index.css';
 import ReduxProvider from '@/redux/provider';
+import ServiceWorkerRegister from '@/components/common/ServiceWorkerRegister';
 
 export const metadata = {
   title: 'Rent a Car Management System',
@@ -11,7 +12,15 @@ export const viewport = { width: 'device-width', initialScale: 1, themeColor: '#
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
-      <body><a href="#main" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[100] focus:bg-white focus:p-2 focus:rounded">Skip to content</a><ReduxProvider>{children}</ReduxProvider></body>
+      <body>
+        <a href="#main" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[100] focus:bg-white focus:p-2 focus:rounded">
+          Skip to content
+        </a>
+        <ReduxProvider>
+          {children}
+          <ServiceWorkerRegister />
+        </ReduxProvider>
+      </body>
     </html>
   );
 }
