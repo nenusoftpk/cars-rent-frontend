@@ -499,44 +499,66 @@ async function mergeCollection(tableName, records, businessId) {
 
 async function pullLatest({ baseUrl, token, businessId }) {
   const paths = [
-    ['cars', '/cars'],
-    ['bookings', '/bookings'],
-    ['customers', '/customers'],
-    ['drivers', '/drivers'],
-    ['payments', '/payments'],
-    ['expenses', '/expenses'],
+    ["cars", "/cars"],
+    ["bookings", "/bookings"],
+    ["customers", "/customers"],
+    ["drivers", "/drivers"],
+    ["payments", "/payments"],
+    ["expenses", "/expenses"],
   ];
 
-  const downloaded = [];
+  const counts = {};
+
+  // Download and safely merge each collection.
   for (const [table, path] of paths) {
     const records = await fetchAll(baseUrl, token, path);
-    downloaded.push([table, records]);
-  }
 
-  for (const [table, records] of downloaded) {
-    await mergeCollection(table, records, businessId);
+    await mergeCollection(
+      table,
+      records,
+      businessId
+    );
+
+    counts[table] = records.length;
   }
 
   try {
-    const setting = await request(join(baseUrl, '/settings'), { token });
+    const setting = await request(
+      join(baseUrl, "/settings"),
+      { token }
+    );
+
     if (setting && !Array.isArray(setting)) {
       await mergeCollection(
-        'settings',
-        [{ ...setting, id: idOf(setting) || String(businessId) }],
+        "settings",
+        [
+          {
+            ...setting,
+            id: idOf(setting) || String(businessId),
+          },
+        ],
         businessId
       );
     }
   } catch (error) {
-    if (error.status !== 404) throw error;
+    if (error.status !== 404) {
+      throw error;
+    }
   }
 
   const timestamp = now();
-  await db.meta.put({ key: `lastSyncAt:${businessId}`, value: timestamp });
-  await db.meta.put({ key: 'lastSyncAt', value: timestamp });
 
-  return Object.fromEntries(
-    downloaded.map(([table, records]) => [table, records.length])
-  );
+  await db.meta.put({
+    key: `lastSyncAt:${businessId}`,
+    value: timestamp,
+  });
+
+  await db.meta.put({
+    key: "lastSyncAt",
+    value: timestamp,
+  });
+
+  return counts;
 }
 
 async function executeSync({

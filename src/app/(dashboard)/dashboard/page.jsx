@@ -809,8 +809,9 @@ export default function DashboardPage() {
               />
             </div>
 
+
             {/* ---------- Charts / activity ---------- */}
-            <div className="grid gap-4 xl:grid-cols-3">
+            <div className="grid w-full min-w-0 grid-cols-1 gap-4 xl:grid-cols-3 [&>*]:min-w-0 [&>*]:max-w-full">
               <SectionCard title="Car Status Overview">
                 {L || carStatsLoading ? (
                   <div className="skeleton h-56" />
@@ -959,12 +960,12 @@ export default function DashboardPage() {
             </div>
 
             {/* ---------- Lists ---------- */}
-            <div className="grid gap-4 xl:grid-cols-3">
+            <div className="grid w-full min-w-0 grid-cols-1 gap-4 xl:grid-cols-3 [&>*]:min-w-0 [&>*]:max-w-full">
               <SectionCard
                 title="Latest Bookings"
                 actions={<View href="/bookings" />}
-                className="xl:col-span-1"
-                bodyClassName="!px-3"
+                className="min-w-0 w-full max-w-full xl:col-span-1"
+                bodyClassName="!px-2 sm:!px-3 min-w-0"
               >
                 {listsLoading ? (
                   <div className="skeleton h-48" />
@@ -979,8 +980,8 @@ export default function DashboardPage() {
                     }
                   />
                 ) : (
-                  <div className="overflow-x-auto">
-                    <table className="table-clean min-w-[420px]">
+                  <div className="w-full min-w-0 max-w-full overflow-x-auto overscroll-x-contain">
+                    <table className="table-clean w-full min-w-[420px] text-xs sm:text-sm">
                       <thead>
                         <tr>
                           <th>#</th>
@@ -1034,7 +1035,8 @@ export default function DashboardPage() {
               <SectionCard
                 title="Overdue Cars"
                 actions={<View href="/bookings?view=overdue" />}
-                bodyClassName="!px-3"
+                className="w-full min-w-0 max-w-full"
+                bodyClassName="!px-2 sm:!px-3 min-w-0"
               >
                 {listsLoading ? (
                   <div className="skeleton h-48" />
@@ -1052,7 +1054,8 @@ export default function DashboardPage() {
                         <li key={b.id}>
                           <Link
                             href={`/bookings/${b.id}`}
-                            className="flex items-center gap-3 py-2.5 px-1 hover:bg-soft rounded-lg"
+                            className="flex w-full min-w-0 flex-wrap items-center
+                             gap-2 rounded-lg px-1 py-2.5 hover:bg-soft sm:flex-nowrap sm:gap-3"
                           >
                             <Avatar
                               src={b.carImage}
@@ -1070,7 +1073,7 @@ export default function DashboardPage() {
                                 {b.customerMobile ? ` · ${b.customerMobile}` : ''}
                               </p>
                             </div>
-                            <div className="text-right shrink-0">
+                            <div className="ml-auto min-w-0 shrink-0 text-right">
                               <p className="text-xs">{safe(fmtDate, b.returnAt)}</p>
                               <span className="badge badge-danger">
                                 {b.lateDays} {b.lateDays === 1 ? 'Day' : 'Days'} late
@@ -1087,7 +1090,8 @@ export default function DashboardPage() {
               <SectionCard
                 title="Upcoming Reminders"
                 actions={can('reminders:view') && <View href="/reminders" />}
-                bodyClassName="!px-3"
+                className="w-full min-w-0 max-w-full"
+                bodyClassName="!px-2 sm:!px-3 min-w-0"
               >
                 {listsLoading || remindersLoading ? (
                   <div className="skeleton h-48" />
@@ -1098,7 +1102,10 @@ export default function DashboardPage() {
                     {reminders.map((r, i) => {
                       const Icon = REM[r.type] || Bell;
                       return (
-                        <li key={idOf(r, i)} className="flex items-center gap-3 py-2.5 px-1">
+                        <li
+                          key={idOf(r, i)}
+                          className="flex w-full min-w-0 flex-wrap items-center gap-2 px-1 py-2.5 sm:flex-nowrap sm:gap-3"
+                        >
                           <span className="grid place-items-center size-9 rounded-lg bg-primary/10 text-primary shrink-0">
                             <Icon size={17} />
                           </span>
@@ -1109,7 +1116,7 @@ export default function DashboardPage() {
                             </p>
                           </div>
                           <span
-                            className={`text-xs font-semibold shrink-0 ${r.view === 'Today' || r.view === 'Overdue'
+                            className={`ml-auto min-w-0 shrink-0 text-right text-[11px] font-semibold sm:text-xs ${r.view === 'Today' || r.view === 'Overdue'
                               ? 'text-danger'
                               : 'text-muted'
                               }`}
@@ -1127,7 +1134,7 @@ export default function DashboardPage() {
             </div>
           </>
         )}
-      </PageContainer>
+      </PageContainer >
     </>
   );
 }

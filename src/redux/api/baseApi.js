@@ -91,21 +91,27 @@ const PUBLIC_AUTH_ROUTES = new Set([
 ]);
 
 const normalizePath = (url) => {
-  const raw = String(url || "").split("?")[0];
+  const raw = String(url || "");
 
   try {
-    if (/^https?:\/\//i.test(raw)) {
-      return new URL(raw).pathname
-        .replace(/^\/api\/v1/, "")
-        .replace(/\/+$/, "") || "/";
-    }
-  } catch {
-    // Fall back to relative URL handling.
-  }
+    const parsed = new URL(
+      raw,
+      "http://localhost"
+    );
 
-  return raw
-    .replace(/^\/api\/v1/, "")
-    .replace(/\/+$/, "") || "/";
+    return (
+      parsed.pathname
+        .replace(/^\/api\/v1(?=\/|$)/, "")
+        .replace(/\/+$/, "") || "/"
+    );
+  } catch {
+    return (
+      raw
+        .split("?")[0]
+        .replace(/^\/api\/v1(?=\/|$)/, "")
+        .replace(/\/+$/, "") || "/"
+    );
+  }
 };
 
 const isPublicAuthRequest = (url) =>
@@ -184,8 +190,18 @@ function parseOfflineRequest(args) {
 
   const rawUrl = String(request.url || "");
 
-  const [path, queryString = ""] =
-    normalizePath(rawUrl).split("?");
+const path = normalizePath(rawUrl);
+
+let queryString = "";
+
+try {
+  queryString = new URL(
+    rawUrl,
+    "http://localhost"
+  ).search.slice(1);
+} catch {
+  queryString = rawUrl.split("?")[1] || "";
+}
 
   const segments = path.split("/").filter(Boolean);
 

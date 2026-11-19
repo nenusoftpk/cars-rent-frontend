@@ -1,80 +1,221 @@
-/* CarsRent offline app-shell service worker
-   - Caches static assets + previously visited app routes
-   - Does NOT cache API responses (business data lives in IndexedDB)
-   - Safe to update: does not touch IndexedDB
-*/
 
-const CACHE_VERSION = "carsrent-shell-v1";
-const SHELL_CACHE = `${CACHE_VERSION}-shell`;
-const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
+/* CarsRent Offline Service Worker */
 
-// Core assets that should be available offline after first visit
-const PRECACHE_URLS = [
+const VERSION = "carsrent-v3";
+
+const PAGE_CACHE = `${VERSION}-pages`;
+const RSC_CACHE = `${VERSION}-rsc`;
+const ASSET_CACHE = `${VERSION}-assets`;
+const IMAGE_CACHE = `${VERSION}-images`;
+
+const APP_ROUTES = [
   "/",
-  "/favicon7.png",
-  // Next.js will also cache JS/CSS chunks at runtime
+  "/dashboard",
+  "/customers",
+  "/cars",
+  "/bookings",
+  "/bookings/new",
+  "/billing",
+  "/drivers",
+  "/income-expenses",
+  "/car-issue-return",
+  "/customer-ledger",
+  "/reports",
+  "/reminders",
+  "/settings",
 ];
+
+const STATIC_FILES = [
+  "/favicon7.png",
+];
+
+const cacheable = (response) =>
+  response &&
+  response.ok &&
+  response.type !== "opaque";
+
+const isRSC = (request, url) =>
+  url.searchParams.has("_rsc") ||
+  request.headers.get("RSC") === "1" ||
+  request.headers.has("Next-Router-State-Tree");
+
+function htmlCacheKey(url) {
+  // Use one HTML shell per pathname.
+  // Client-side filters still come from the URL.
+  return new URL(url.pathname, self.location.origin).href;
+}
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(SHELL_CACHE).then((cache) => cache.addAll(PRECACHE_URLS)).then(() => self.skipWaiting())
+    (async () => {
+      const cache = await caches.open(ASSET_CACHE);
+
+      await Promise.allSettled(
+        STATIC_FILES.map(async (path) => {
+          const response = await fetch(path, {
+            cache: "reload",
+          });
+
+          if (cacheable(response)) {
+            await cache.put(path, response);
+          }
+        })
+      );
+
+      // Pages are cached when visited.
+      // Do not automatically fetch private routes
+      // during service worker installation.
+
+      await self.skipWaiting();
+    })()
   );
 });
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(
+    (async () => {
+      const keys = await caches.keys();
+
+      await Promise.all(
         keys
-          .filter((k) => k.startsWith("carsrent-shell-") && k !== SHELL_CACHE && k !== RUNTIME_CACHE)
-          .map((k) => caches.delete(k))
-      )
-    ).then(() => self.clients.claim())
+          .filter(
+            (key) =>
+              key.startsWith("carsrent-") &&
+              ![
+                PAGE_CACHE,
+                RSC_CACHE,
+                ASSET_CACHE,
+                IMAGE_CACHE,
+              ].includes(key)
+          )
+          .map((key) => caches.delete(key))
+      );
+
+      await self.clients.claim();
+    })()
   );
 });
 
 self.addEventListener("fetch", (event) => {
-  const { request } = event;
+  const request = event.request;
   const url = new URL(request.url);
 
-  // Only handle same-origin GET
-  if (request.method !== "GET" || url.origin !== self.location.origin) return;
+  if (request.method !== "GET") return;
 
-  // Never cache API calls – offline data comes from IndexedDB via baseApi
-  if (url.pathname.startsWith("/api/")) return;
+  const sameOrigin =
+    url.origin === self.location.origin;
 
-  // Navigation requests (HTML pages) → network first, fallback to cache
-  if (request.mode === "navigate") {
+  // Cloudinary images: cache after first online load.
+  if (
+    url.hostname === "res.cloudinary.com" &&
+    request.destination === "image"
+  ) {
     event.respondWith(
-      fetch(request)
-        .then((response) => {
-          const copy = response.clone();
-          caches.open(RUNTIME_CACHE).then((cache) => cache.put(request, copy));
-          return response;
-        })
-        .catch(() =>
-          caches.match(request).then((cached) => cached || caches.match("/"))
-        )
+      (async () => {
+        const cache = await caches.open(IMAGE_CACHE);
+        const cached = await cache.match(request);
+
+        if (cached) return cached;
+
+        const response = await fetch(request);
+
+        if (response.ok || response.type === "opaque") {
+          await cache.put(request, response.clone());
+        }
+
+        return response;
+      })()
     );
+
     return;
   }
 
-  // Static assets (JS, CSS, fonts, images) → cache first, then network
-  if (
-    url.pathname.startsWith("/_next/static/") ||
-    url.pathname.match(/\.(js|css|woff2?|png|jpg|jpeg|svg|ico|webp)$/)
-  ) {
+  if (!sameOrigin) return;
+
+  // Business API requests remain managed by IndexedDB.
+  if (url.pathname.startsWith("/api/")) return;
+
+  // Never return an HTML document for an RSC request.
+  if (isRSC(request, url)) {
     event.respondWith(
-      caches.match(request).then((cached) => {
-        if (cached) return cached;
-        return fetch(request).then((response) => {
-          if (response.ok) {
-            const copy = response.clone();
-            caches.open(SHELL_CACHE).then((cache) => cache.put(request, copy));
+      (async () => {
+        const cache = await caches.open(RSC_CACHE);
+
+        try {
+          const response = await fetch(request);
+
+          if (cacheable(response)) {
+            await cache.put(request, response.clone());
           }
+
           return response;
-        });
-      })
+        } catch {
+          const cached = await cache.match(request);
+
+          return cached || Response.error();
+        }
+      })()
+    );
+
+    return;
+  }
+
+  // HTML navigation: network first, cache fallback.
+  if (request.mode === "navigate") {
+    event.respondWith(
+      (async () => {
+        const cache = await caches.open(PAGE_CACHE);
+        const key = htmlCacheKey(url);
+
+        try {
+          const response = await fetch(request);
+
+          if (
+            cacheable(response) &&
+            response.headers
+              .get("content-type")
+              ?.includes("text/html")
+          ) {
+            await cache.put(key, response.clone());
+          }
+
+          return response;
+        } catch {
+          const cached = await cache.match(key);
+
+          if (cached) return cached;
+
+          // An uncached route cannot safely use
+          // another authenticated page as fallback.
+          return Response.error();
+        }
+      })()
+    );
+
+    return;
+  }
+
+  const isAsset =
+    url.pathname.startsWith("/_next/static/") ||
+    /\.(js|css|woff2?|png|jpg|jpeg|svg|ico|webp)$/i
+      .test(url.pathname);
+
+  if (isAsset) {
+    event.respondWith(
+      (async () => {
+        const cache = await caches.open(ASSET_CACHE);
+        const cached = await cache.match(request);
+
+        if (cached) return cached;
+
+        const response = await fetch(request);
+
+        if (cacheable(response)) {
+          await cache.put(request, response.clone());
+        }
+
+        return response;
+      })()
     );
   }
 });

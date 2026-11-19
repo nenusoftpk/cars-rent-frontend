@@ -87,10 +87,46 @@ const IMAGE_FIELDS = ["photo", "cnicFront", "cnicBack", "licenseImage"];
 const isRealFile = (value) =>
   typeof File !== "undefined" && value instanceof File;
 
-const hasNewFiles = (body = {}) =>
-  IMAGE_FIELDS.some((key) => isRealFile(body?.[key]));
+const isBase64Image = (value) =>
+  typeof value === "string" &&
+  /^data:image\/(?:jpeg|png|webp);base64,/i.test(value);
 
-/** Plain JSON body – works both online and offline */
+const hasNewFiles = (body = {}) =>
+  IMAGE_FIELDS.some(
+    (key) => isRealFile(body[key]) || isBase64Image(body[key])
+  );
+
+// Convert Base64 image to a real File
+function base64ToFile(dataUrl, fieldName) {
+  const [header, base64] = dataUrl.split(",");
+
+  const mimeType =
+    header.match(/^data:(image\/(?:jpeg|png|webp));base64$/i)?.[1];
+
+  if (!mimeType || !base64) {
+    throw new Error(`Invalid image for ${fieldName}`);
+  }
+
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+
+  const extension =
+    mimeType.toLowerCase() === "image/jpeg"
+      ? "jpg"
+      : mimeType.split("/")[1].toLowerCase();
+
+  return new File(
+    [bytes],
+    `${fieldName}-${Date.now()}.${extension}`,
+    { type: mimeType }
+  );
+}
+
+// JSON for requests without new images
 function toDriverJSON(body = {}) {
   const result = {};
   const has = (v) => v !== undefined && v !== null && v !== "";
@@ -98,40 +134,50 @@ function toDriverJSON(body = {}) {
   for (const k of [...REQUIRED_TEXT, ...NUMBER_FIELDS, ...ENUM_FIELDS]) {
     if (has(body[k])) result[k] = body[k];
   }
+
   for (const k of CLEARABLE_TEXT) {
     if (body[k] !== undefined && body[k] !== null) {
       result[k] = body[k];
     }
   }
+
   return result;
 }
 
-/** Multipart FormData – online only */
+// Multipart upload for requests containing new images
 function toDriverFormData(body = {}) {
   const fd = new FormData();
   const has = (v) => v !== undefined && v !== null && v !== "";
 
   for (const k of [...REQUIRED_TEXT, ...NUMBER_FIELDS, ...ENUM_FIELDS]) {
-    if (has(body[k])) fd.append(k, String(body[k]).trim());
+    if (has(body[k])) {
+      fd.append(k, String(body[k]).trim());
+    }
   }
+
   for (const k of CLEARABLE_TEXT) {
     if (body[k] !== undefined && body[k] !== null) {
       fd.append(k, String(body[k]).trim());
     }
   }
-  for (const k of IMAGE_FIELDS) {
-    if (isRealFile(body[k])) fd.append(k, body[k]);
+
+  for (const field of IMAGE_FIELDS) {
+    const value = body[field];
+
+    if (isRealFile(value)) {
+      fd.append(field, value);
+    } else if (isBase64Image(value)) {
+      fd.append(field, base64ToFile(value, field));
+    }
   }
+
   return fd;
 }
 
-/**
- * Choose the correct body format.
- * No new images → JSON (online + offline)
- * New images   → FormData (online only)
- */
 function buildDriverBody(body = {}) {
-  return hasNewFiles(body) ? toDriverFormData(body) : toDriverJSON(body);
+  return hasNewFiles(body)
+    ? toDriverFormData(body)
+    : toDriverJSON(body);
 }
 
 /** page params → params the backend reads */

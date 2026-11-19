@@ -25,11 +25,16 @@ export default function AppShell({ children }) {
   useEffect(() => { if (settings) { setFormatPrefs(settings); setBusinessInfo(settings); } }, [settings]);
   if (!ready || !token || !user) return <LoadingScreen />;
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen w-full min-w-0">
       <AppSidebar />
-      <div className={`transition-[padding] duration-200 ${collapsed ? 'lg:pl-[var(--sidebar-w-collapsed)]' : 'lg:pl-[var(--sidebar-w)]'}`}>
+      <div
+        className={`box-border w-full min-w-0 max-w-full transition-[padding] duration-200 ${collapsed
+          ? 'lg:pl-[var(--sidebar-w-collapsed)]'
+          : 'lg:pl-[var(--sidebar-w)]'
+          }`}
+      >
         <AppNavbar />
-        <main id="main" className="min-w-0"><ErrorBoundary key={path}><Suspense fallback={<LoadingScreen inline />}>{children}</Suspense></ErrorBoundary></main>
+        <main id="main" className="w-full min-w-0 max-w-full"><ErrorBoundary key={path}><Suspense fallback={<LoadingScreen inline />}>{children}</Suspense></ErrorBoundary></main>
       </div>
     </div>
   );
