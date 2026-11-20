@@ -14,7 +14,22 @@ export default function FormImageUpload({ name, value, onChange, label, required
       {({ value: v, onChange: set, error }) => {
         const pick = async (file) => {
           if (!file) return;
-          try { setProgress(5); const r = await readUpload(file, { types: IMAGE_TYPES, onProgress: setProgress }); set(r.url); } catch (e) { toast.error(e.message); } finally { setTimeout(() => setProgress(null), 400); }
+
+          try {
+            setProgress(5);
+
+            await readUpload(file, {
+              types: IMAGE_TYPES,
+              onProgress: setProgress,
+            });
+
+            // Store the actual File for multipart upload.
+            set(file);
+          } catch (e) {
+            toast.error(e.message);
+          } finally {
+            setTimeout(() => setProgress(null), 400);
+          }
         };
         return (
           <Field label={label} required={required} error={error} hint={hint} className={className}>

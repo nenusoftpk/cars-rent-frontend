@@ -75,26 +75,73 @@ export default function CustomerFormModal({ open, customer, onClose, onSaved }) 
   const busy = adding || saving;
 
   const onSubmit = async (values) => {
+    alert("CUSTOMER FORM SUBMITTED");
+
+    console.log("CUSTOMER FORM VALUES:", values);
     try {
-      // FormImageUpload stores either a File or the existing URL string.
-      // The API layer only appends real File instances.
+      const imageFields = [
+        "photo",
+        "cnicFront",
+        "cnicBack",
+        "licenseImage",
+      ];
+
+      console.log("CUSTOMER FORM VALUES:", values);
+
+      console.log(
+        "CUSTOMER IMAGE DEBUG:",
+        Object.fromEntries(
+          imageFields.map((field) => [
+            field,
+            {
+              value: values[field],
+              isFile:
+                typeof File !== "undefined" &&
+                values[field] instanceof File,
+              isBase64:
+                typeof values[field] === "string" &&
+                values[field].startsWith("data:image/"),
+            },
+          ])
+        )
+      );
+
       const payload = {
         ...values,
-        // backend expects lowercase status
-        // Clean the mobile number – remove dashes and spaces
         mobile: String(values.mobile || "").replace(/[\s-]/g, ""),
         status: String(values.status || "Active").toLowerCase(),
       };
 
+      // CUSTOMER IMAGE DEBUG — ADD HERE
+      console.log(
+        "CUSTOMER IMAGE VALUES:",
+        Object.fromEntries(
+          ["photo", "cnicFront", "cnicBack", "licenseImage"].map((key) => [
+            key,
+            {
+              type: typeof payload[key],
+              isFile:
+                typeof File !== "undefined" &&
+                payload[key] instanceof File,
+              isBase64:
+                typeof payload[key] === "string" &&
+                payload[key].startsWith("data:image/"),
+            },
+          ])
+        )
+      );
+
+      // KEEP EXISTING API CALL
       const saved = editing
         ? await update({ id: customer.id, ...payload }).unwrap()
         : await add(payload).unwrap();
 
       toast.success(
         editing
-          ? 'Customer changes saved successfully'
-          : 'Customer saved successfully'
+          ? "Customer changes saved successfully"
+          : "Customer saved successfully"
       );
+
       onSaved?.(saved);
       onClose();
     } catch (e) {

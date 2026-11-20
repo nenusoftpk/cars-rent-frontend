@@ -82,13 +82,45 @@ const sameId = (a, b) => {
 };
 
 const isRealFile = (value) =>
-  typeof File !== "undefined" &&
-  value instanceof File;
+  typeof File !== "undefined" && value instanceof File;
+
+const isBase64Image = (value) =>
+  typeof value === "string" &&
+  /^data:image\/(?:jpeg|png|webp);base64,/i.test(value);
 
 const hasNewFiles = (body = {}) =>
-  CUSTOMER_IMAGE_FIELDS.some((key) =>
-    isRealFile(body?.[key])
+  CUSTOMER_IMAGE_FIELDS.some(
+    (key) => isRealFile(body[key]) || isBase64Image(body[key])
   );
+
+function base64ToFile(dataUrl, fieldName) {
+  const [header, base64] = dataUrl.split(",");
+
+  const mimeType =
+    header.match(/^data:(image\/(?:jpeg|png|webp));base64$/i)?.[1];
+
+  if (!mimeType || !base64) {
+    throw new Error(`Invalid image for ${fieldName}`);
+  }
+
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+
+  const extension =
+    mimeType.toLowerCase() === "image/jpeg"
+      ? "jpg"
+      : mimeType.split("/")[1].toLowerCase();
+
+  return new File(
+    [bytes],
+    `${fieldName}-${Date.now()}.${extension}`,
+    { type: mimeType }
+  );
+}
 
 const unwrap = (response) => {
   if (
@@ -386,6 +418,8 @@ function toCustomerFormData(body = {}) {
 
     if (isRealFile(value)) {
       fd.append(key, value);
+    } else if (isBase64Image(value)) {
+      fd.append(key, base64ToFile(value, key));
     }
   }
 

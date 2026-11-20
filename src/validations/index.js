@@ -84,15 +84,42 @@ export const signupSchema = z
   );
 
 
+const optionalImage = z
+  .union([
+    z.string(),
+    z.custom(
+      (value) =>
+        typeof File !== 'undefined' &&
+        value instanceof File
+    ),
+    z.null(),
+  ])
+  .optional();
+
 export const customerSchema = z.object({
-  name: req('Please enter the customer name').min(3, 'Name is too short'),
-  mobile: z.string().regex(MOBILE_RE, 'Please enter a valid mobile number (0300-1234567)'),
+  name: req('Please enter the customer name')
+    .min(3, 'Name is too short'),
+
+  mobile: z.string().regex(
+    MOBILE_RE,
+    'Please enter a valid mobile number (0300-1234567)'
+  ),
+
   address: req('Please enter the home address'),
   city: optionalStr,
   type: optionalStr,
-  cnic: z.string().regex(CNIC_RE, 'Please enter a valid CNIC (35202-1234567-1)'),
+
+  cnic: z.string().regex(
+    CNIC_RE,
+    'Please enter a valid CNIC (35202-1234567-1)'
+  ),
+
   licenseNo: optionalStr,
-  photo: optionalStr, cnicFront: optionalStr, cnicBack: optionalStr, licenseImage: optionalStr,
+
+  photo: optionalImage,
+  cnicFront: optionalImage,
+  cnicBack: optionalImage,
+  licenseImage: optionalImage,
 });
 
 export const carSchema = z.object({

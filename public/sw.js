@@ -106,10 +106,25 @@ async function staleWhileRevalidate(req, name, max) {
 }
 
 const isHtml = (res) => (res.headers.get("Content-Type") || "").includes("text/html");
-const pageKey = (url) => new Request(url.origin + url.pathname + url.search);
+const stripSlash = (p) => (p.length > 1 ? p.replace(/\/+$/, "") : p);
+// /dashboard and /dashboard/ share one cache entry
+const pageKey = (url) => new Request(url.origin + stripSlash(url.pathname) + url.search);
 
 async function matchPage(cache, url) {
   return (await cache.match(pageKey(url))) || (await cache.match(pageKey(url), { ignoreSearch: true }));
+}
+
+// A redirect is only safe to cache when it ends on the same page (e.g. a trailing slash),
+// never when it sends the user somewhere else (e.g. /login).
+function cacheable(res, url) {
+  if (!res.ok || !isHtml(res)) return false;
+  if (!res.redirected) return true;
+  try {
+    const finalUrl = new URL(res.url);
+    return finalUrl.origin === url.origin && stripSlash(finalUrl.pathname) === stripSlash(url.pathname);
+  } catch {
+    return false;
+  }
 }
 
 // Strip the `redirected` flag etc. so the copy can be used for a navigation request.
@@ -134,7 +149,7 @@ async function pageStrategy(req) {
       ? await Promise.race([network, new Promise((_, reject) => setTimeout(reject, NAV_TIMEOUT_MS))])
       : await network;
 
-    if (res.ok && isHtml(res) && !res.redirected) {
+    if (cacheable(res, url)) {
       cleanCopy(res.clone()).then((copy) => cache.put(pageKey(url), copy)).then(() => trim(cache, MAX_PAGES)).catch(() => {});
       return res;
     }
@@ -167,8 +182,8 @@ async function warm(urls) {
       const url = new URL(target, self.location.origin);
       if (url.origin !== self.location.origin) continue;
       const res = await fetch(url.href, { headers: { Accept: "text/html" }, credentials: "same-origin" });
-      // A redirect (e.g. to /login) must not be stored under the requested route.
-      if (!res.ok || res.redirected || !isHtml(res)) continue;
+      // A redirect to a different page (e.g. /login) must not be stored under this route.
+      if (!cacheable(res, url)) continue;
       const html = await res.clone().text();
       await pages.put(pageKey(url), await cleanCopy(res));
       extractAssets(html).forEach((a) => assets.add(a));
