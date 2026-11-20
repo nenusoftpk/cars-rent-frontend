@@ -1,5 +1,3 @@
-
-
 import { baseApi, clean } from "./baseApi";
 
 import {
@@ -27,6 +25,23 @@ const CUSTOMER_TAGS = [
 // CUSTOMER FIELDS
 // ======================================================
 
+// Guarantor request fields (must match the backend controller exactly):
+//   guarantor{1|2}Enabled / Name / Mobile  -> text
+//   guarantor{1|2}Photo / CnicFront / CnicBack -> image files
+const GUARANTOR_NUMBERS = [1, 2];
+
+const GUARANTOR_TEXT_FIELDS = GUARANTOR_NUMBERS.flatMap((n) => [
+  `guarantor${n}Enabled`,
+  `guarantor${n}Name`,
+  `guarantor${n}Mobile`,
+]);
+
+const GUARANTOR_IMAGE_FIELDS = GUARANTOR_NUMBERS.flatMap((n) => [
+  `guarantor${n}Photo`,
+  `guarantor${n}CnicFront`,
+  `guarantor${n}CnicBack`,
+]);
+
 const CUSTOMER_TEXT_FIELDS = [
   "name",
   "mobile",
@@ -45,6 +60,7 @@ const CUSTOMER_TEXT_FIELDS = [
   "notes",
   "status",
   "customerCode",
+  ...GUARANTOR_TEXT_FIELDS,
 ];
 
 const CUSTOMER_IMAGE_FIELDS = [
@@ -52,6 +68,7 @@ const CUSTOMER_IMAGE_FIELDS = [
   "cnicFront",
   "cnicBack",
   "licenseImage",
+  ...GUARANTOR_IMAGE_FIELDS,
 ];
 
 // ======================================================
@@ -156,6 +173,20 @@ const numberOrNull = (value) => {
 // CUSTOMER NORMALIZATION
 // ======================================================
 
+function mapGuarantor(guarantor) {
+  const g = guarantor && typeof guarantor === "object" ? guarantor : {};
+
+  return {
+    enabled: Boolean(g.enabled),
+    name: g.name ?? "",
+    mobile: g.mobile ?? "",
+    photo: g.photo ?? "",
+    cnicFront: g.cnicFront ?? "",
+    cnicBack: g.cnicBack ?? "",
+    locked: Boolean(g.locked),
+  };
+}
+
 function mapCustomer(customer) {
   if (!customer || typeof customer !== "object") {
     return customer;
@@ -164,6 +195,8 @@ function mapCustomer(customer) {
   return {
     ...customer,
     id: idOf(customer),
+    guarantor1: mapGuarantor(customer.guarantor1),
+    guarantor2: mapGuarantor(customer.guarantor2),
     mobile:
       customer.mobile ??
       customer.phone ??

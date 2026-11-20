@@ -758,7 +758,6 @@ export default function NewBookingPage() {
                   <FormSelect
                     name="staffId"
                     label="Responsible Employee"
-                    required
                     options={(staff?.items || []).map((employee) => ({
                       value: employee.id,
                       label: employee.name,
