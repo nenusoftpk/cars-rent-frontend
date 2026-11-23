@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 import Link from 'next/link';
-import { Phone, MapPin, Pencil, Printer, CalendarPlus, BookOpen, Lock, Mail, Users } from 'lucide-react';
+import { Phone, MapPin, Pencil, Printer, CalendarPlus, BookOpen, Lock, Mail, Users, Fingerprint } from 'lucide-react';
 import DetailDrawer from '@/components/modals/DetailDrawer';
 import Tabs from '@/components/common/Tabs';
 import StatusBadge from '@/components/common/StatusBadge';
@@ -78,10 +78,64 @@ function GuarantorCard({ n, g }) {
   );
 }
 
+function FingerprintCard({ customer, canView }) {
+  const has = Boolean(customer?.hasFingerprint || customer?.biometric?.available);
+  const scannedAt = customer?.biometric?.scannedAt;
+  const imageUrl = canView ? (customer?.biometric?.thumbImage || null) : null;
+
+  return (
+    <div className="rounded-xl border border-line p-3 sm:p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <Fingerprint size={16} className="text-primary" />
+        <h4 className="text-sm font-extrabold">Thumb Fingerprint</h4>
+        {has ? (
+          <span className="badge badge-success ml-auto">On file</span>
+        ) : (
+          <span className="badge badge-neutral ml-auto">Not scanned</span>
+        )}
+      </div>
+
+      {has ? (
+        <div className="flex flex-col sm:flex-row gap-4 items-start">
+          <div className="w-24 h-32 rounded-xl border border-line bg-soft overflow-hidden grid place-items-center shrink-0">
+            {imageUrl ? (
+              <a href={imageUrl} target="_blank" rel="noreferrer" title="Open full size" className="block size-full">
+                <img
+                  src={imageUrl}
+                  alt="Thumb fingerprint"
+                  className="size-full object-contain"
+                />
+              </a>
+            ) : (
+              <span className="text-xs text-muted flex flex-col items-center gap-1 px-2 text-center">
+                <Lock size={18} />
+                {canView ? 'Image unavailable' : 'Hidden – no permission'}
+              </span>
+            )}
+          </div>
+          <div className="space-y-1 text-sm">
+            <p className="text-muted text-xs">Scanned on</p>
+            <p className="font-semibold">{scannedAt ? fmtDate(scannedAt) : '—'}</p>
+            {!canView && (
+              <p className="text-xs text-muted mt-2 flex items-center gap-1">
+                <Lock size={12} /> You need document permission to view the image.
+              </p>
+            )}
+          </div>
+        </div>
+      ) : (
+        <p className="text-sm text-muted">No thumb fingerprint has been recorded for this customer.</p>
+      )}
+    </div>
+  );
+}
+
 export default function CustomerDrawer({ id, onClose, onEdit }) {
   const [tab, setTab] = useState('details');
   const { can } = useAuth();
   const { data: c, isLoading, error, refetch } = useGetCustomerQuery(id, { skip: !id });
+
+  const canViewSensitive = can('sensitive:view') || can('customers.documents.view');
 
   const docs = c
     ? [
@@ -139,6 +193,11 @@ export default function CustomerDrawer({ id, onClose, onEdit }) {
                 <h3 className="text-xl font-extrabold">{c.name}</h3>
                 {c.type && <StatusBadge status={c.type} />}
                 <StatusBadge status={c.status} />
+                {c.hasFingerprint && (
+                  <span className="badge badge-info flex items-center gap-1">
+                    <Fingerprint size={12} /> Fingerprint
+                  </span>
+                )}
               </div>
               <p className="text-sm text-muted flex items-center gap-1.5 mt-1"><Phone size={14} />{c.mobile}</p>
               <p className="text-sm text-muted flex items-center gap-1.5"><MapPin size={14} />{fullAddress}</p>
@@ -202,6 +261,9 @@ export default function CustomerDrawer({ id, onClose, onEdit }) {
                   ))}
                 </div>
               </div>
+
+              {/* Fingerprint status + preview */}
+              <FingerprintCard customer={c} canView={canViewSensitive} />
             </div>
           )}
 

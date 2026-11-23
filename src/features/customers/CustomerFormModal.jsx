@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
-import { Save, Users } from 'lucide-react';
+import { Save, Users, Fingerprint, Wifi, WifiOff, RefreshCw } from 'lucide-react';
 
 import AppModal from '@/components/modals/AppModal';
 import ConfirmDialog from '@/components/modals/ConfirmDialog';
@@ -25,6 +25,7 @@ import {
 import { errorMessage } from '@/redux/api/baseApi';
 import { isBrowserOnline } from '@/offline/offlineAdapter';
 import { useAuth } from '@/hooks/useAuth';
+import { captureSecuGenThumb } from '@/lib/secugenCapture';
 
 // ======================================================
 // GUARANTOR CONSTANTS
@@ -47,7 +48,7 @@ const MAX_IMAGE_MB = 5;
 const MAX_IMAGE_BYTES = MAX_IMAGE_MB * 1024 * 1024;
 
 // Same rule as the Mongoose model (prefix 0 / 92 / +92 / 0092 + 3XXXXXXXXX)
-const PK_MOBILE_REGEX = /^(?:\+92|0092|92|0)3\d{9}$/;
+const PK_MOBILE_REGEX = /^(?:\\+92|0092|92|0)3\\d{9}$/;
 
 const gKey = (n, part) => `guarantor${n}${part}`;
 
@@ -70,7 +71,7 @@ const emptyGuarantors = () =>
     ])
   );
 
-const cleanMobile = (value) => String(value || '').replace(/[\s-]/g, '');
+const cleanMobile = (value) => String(value || '').replace(/[\\s-]/g, '');
 
 const isNewImage = (value) =>
   (typeof File !== 'undefined' && value instanceof File) ||
@@ -109,7 +110,7 @@ function imageProblem(value, text) {
 }
 
 export const formatMobile = (value = "") => {
-  const digits = String(value ?? "").replace(/\D/g, "").slice(0, 11);
+  const digits = String(value ?? "").replace(/\\D/g, "").slice(0, 11);
 
   if (digits.length <= 4) return digits;
 
@@ -266,6 +267,134 @@ function GuarantorSection({ n, enabled, onToggle, errors }) {
 }
 
 // ======================================================
+// SCAN THUMB SECTION
+// ======================================================
+
+function ScanThumbSection({
+  previewUrl,
+  consent,
+  onConsentChange,
+  onScan,
+  onClear,
+  scanning,
+  scannerReady,
+  hasExisting,
+  locked,
+}) {
+  if (locked) {
+    return (
+      <div className="rounded-xl border border-line bg-soft px-4 py-3 text-sm text-muted">
+        Fingerprint data is hidden – you need permission to view or change it.
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-xl border border-primary/30 bg-primary/[0.03] p-4 space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Fingerprint size={18} className="text-primary" />
+          <h3 className="text-sm font-extrabold">Thumb Fingerprint</h3>
+        </div>
+        <div className="flex items-center gap-1.5 text-xs font-medium">
+          {scannerReady === null ? (
+            <span className="text-muted">Checking scanner…</span>
+          ) : scannerReady ? (
+            <span className="text-success flex items-center gap-1">
+              <Wifi size={13} /> Scanner ready
+            </span>
+          ) : (
+            <span className="text-warning flex items-center gap-1">
+              <WifiOff size={13} /> Scanner not detected
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div className="flex flex-col sm:flex-row gap-4 items-start">
+        {/* Preview */}
+        <div className="shrink-0 w-28 h-36 rounded-xl border border-line bg-white overflow-hidden grid place-items-center">
+          {previewUrl ? (
+            <img
+              src={previewUrl}
+              alt="Thumb fingerprint"
+              className="size-full object-contain"
+            />
+          ) : (
+            <div className="text-center px-2">
+              <Fingerprint size={28} className="mx-auto text-muted/50 mb-1" />
+              <p className="text-[10px] text-muted leading-tight">
+                {hasExisting ? 'Saved fingerprint' : 'No scan yet'}
+              </p>
+            </div>
+          )}
+        </div>
+
+        <div className="flex-1 space-y-3 min-w-0">
+          <p className="text-xs text-muted leading-relaxed">
+            Place the customer's right thumb firmly on the SecuGen Hamster Pro 20
+            scanner, then press Scan. The image is encrypted on the server and
+            never stored offline.
+          </p>
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              onClick={onScan}
+              disabled={scanning || !isBrowserOnline()}
+            >
+              {scanning ? (
+                <>
+                  <RefreshCw size={14} className="animate-spin" /> Scanning…
+                </>
+              ) : (
+                <>
+                  <Fingerprint size={14} /> {previewUrl || hasExisting ? 'Rescan Thumb' : 'Scan Thumb'}
+                </>
+              )}
+            </button>
+
+            {(previewUrl || hasExisting) && (
+              <button
+                type="button"
+                className="btn btn-neutral btn-sm"
+                onClick={onClear}
+                disabled={scanning}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+
+          {!isBrowserOnline() && (
+            <p className="text-xs text-danger">
+              Fingerprint capture requires an internet connection.
+            </p>
+          )}
+
+          {/* Consent – required by backend when a new image is uploaded */}
+          {(previewUrl || hasExisting) && (
+            <label className="flex items-start gap-2.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                className="size-4 mt-0.5 accent-primary cursor-pointer shrink-0"
+                checked={consent}
+                onChange={(e) => onConsentChange(e.target.checked)}
+              />
+              <span className="text-xs leading-snug">
+                Customer has given consent to store this fingerprint image securely
+                for identification purposes.
+              </span>
+            </label>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ======================================================
 // MAIN MODAL
 // ======================================================
 
@@ -278,6 +407,14 @@ export default function CustomerFormModal({ open, customer, onClose, onSaved }) 
   const [add, { isLoading: adding }] = useAddCustomerMutation();
   const [update, { isLoading: saving }] = useUpdateCustomerMutation();
   const [removing, setRemoving] = useState(null); // 1 | 2 | null
+
+  // Fingerprint local state (never persisted offline)
+  const [thumbFile, setThumbFile] = useState(null);       // File | null
+  const [thumbPreview, setThumbPreview] = useState(null); // data URL | null
+  const [thumbConsent, setThumbConsent] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [scannerReady, setScannerReady] = useState(null); // null | true | false
+  const [hasExistingThumb, setHasExistingThumb] = useState(false);
 
   // The customers list does not include guarantor documents, so when
   // editing we load the full customer record (same call the drawer uses).
@@ -299,6 +436,7 @@ export default function CustomerFormModal({ open, customer, onClose, onSaved }) 
 
   const { errors, isValid } = form.formState;
 
+  // Reset form + fingerprint state when modal opens / customer changes
   useEffect(() => {
     if (!open || !ready) return;
 
@@ -327,9 +465,60 @@ export default function CustomerFormModal({ open, customer, onClose, onSaved }) 
       licenseNo: source?.licenseNo || source?.licenseNumber || '',
       ...guarantorValues,
     });
+
+    // Fingerprint state
+    const existing = Boolean(source?.hasFingerprint || source?.biometric?.available);
+    setHasExistingThumb(existing);
+    setThumbFile(null);
+    setThumbPreview(source?.biometric?.thumbImage || null);
+    setThumbConsent(false);
   }, [open, customer?.id, ready]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Lightweight scanner presence check when modal opens
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { checkSecuGenAvailable } = await import('@/lib/secugenCapture');
+        const ok = await checkSecuGenAvailable();
+        if (!cancelled) setScannerReady(ok);
+      } catch {
+        if (!cancelled) setScannerReady(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [open]);
+
   const busy = adding || saving;
+
+  // ---------- fingerprint handlers ----------
+
+  const handleScan = async () => {
+    if (!isBrowserOnline()) {
+      toast.error('Fingerprint capture requires an internet connection.');
+      return;
+    }
+    setScanning(true);
+    try {
+      const result = await captureSecuGenThumb();
+      setThumbFile(result.file);
+      setThumbPreview(result.dataUrl);
+      setThumbConsent(false); // force user to re-confirm consent for the new scan
+      toast.success('Thumb scanned successfully');
+    } catch (err) {
+      toast.error(err?.message || 'Could not capture fingerprint. Check the scanner.');
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  const handleClearThumb = () => {
+    setThumbFile(null);
+    setThumbPreview(hasExistingThumb ? null : null);
+    setHasExistingThumb(false);
+    setThumbConsent(false);
+  };
 
   // ---------- guarantor helpers ----------
 
@@ -369,11 +558,23 @@ export default function CustomerFormModal({ open, customer, onClose, onSaved }) 
 
   const onSubmit = async (values) => {
     try {
+      // New fingerprint requires explicit consent
+      if (thumbFile && !thumbConsent) {
+        toast.error('Please confirm customer consent before saving the fingerprint.');
+        return;
+      }
+
       const payload = {
         ...values,
         mobile: cleanMobile(values.mobile),
         status: String(values.status || 'Active').toLowerCase(),
       };
+
+      // Attach fingerprint only when a NEW scan was performed
+      if (thumbFile) {
+        payload.thumbImage = thumbFile;
+        payload.biometricConsent = 'true';
+      }
 
       let touchesGuarantors = false;
 
@@ -416,9 +617,9 @@ export default function CustomerFormModal({ open, customer, onClose, onSaved }) 
       }
 
       // Sensitive documents must never be queued in offline storage
-      if (touchesGuarantors && !isBrowserOnline()) {
+      if ((touchesGuarantors || thumbFile) && !isBrowserOnline()) {
         toast.error(
-          'Guarantor documents cannot be saved offline. Please reconnect and try again.'
+          'Sensitive documents and fingerprints cannot be saved offline. Please reconnect and try again.'
         );
         return;
       }
@@ -577,6 +778,19 @@ export default function CustomerFormModal({ open, customer, onClose, onSaved }) 
               locked={locked}
             />
           </div>
+
+          {/* ---------------- THUMB FINGERPRINT ---------------- */}
+          <ScanThumbSection
+            previewUrl={thumbPreview}
+            consent={thumbConsent}
+            onConsentChange={setThumbConsent}
+            onScan={handleScan}
+            onClear={handleClearThumb}
+            scanning={scanning}
+            scannerReady={scannerReady}
+            hasExisting={hasExistingThumb}
+            locked={locked}
+          />
 
           {/* ---------------- GUARANTORS ---------------- */}
           <div className="space-y-3 border-t border-line pt-4">

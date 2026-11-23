@@ -39,8 +39,8 @@ const FUEL = FUEL_LEVELS.map((f) => ({ value: f, label: f }));
 // Defaults used by calcReturn until a real settings endpoint exists
 const DEFAULT_SETTINGS = {
   graceHours: 1,
-  kmLimitPerDay: 200,
-  extraKmRate: 20,
+  kmLimitPerDay: 0,
+  extraKmRate: 0,
 };
 
 const finish = (b, r, key, status) => ({
@@ -382,7 +382,7 @@ function ReturnPanel({ bookingId, setBookingId }) {
         photos: v.photos,
         damageCharges: (Number(v.damageCharge) || 0) + other,
         lateCharges: calc.lateCharge,
-        extraKmCharges: calc.extraKmCharge,
+        extraKmCharges: 0,
         notes: other > 0 ? `Other charges included in damage charges: Rs. ${other}` : '',
       }).unwrap();
       toast.success('Car returned successfully');
@@ -505,10 +505,6 @@ function ReturnPanel({ bookingId, setBookingId }) {
                   k={`Late return (${calc.extraDays} extra day${calc.extraDays === 1 ? '' : 's'})`}
                   v={formatPKR(calc.lateCharge)}
                   tone={calc.lateCharge ? 'text-danger' : ''}
-                />
-                <R
-                  k={`Extra kilometres (${formatNum(calc.extraKm)} km of ${formatNum(calc.km)} km driven)`}
-                  v={formatPKR(calc.extraKmCharge)}
                 />
                 <R
                   k="Damage and other charges"

@@ -92,9 +92,31 @@ const optionalImage = z
         typeof File !== 'undefined' &&
         value instanceof File
     ),
+    z.custom(
+      (value) =>
+        typeof Blob !== 'undefined' &&
+        value instanceof Blob
+    ),
     z.null(),
   ])
   .optional();
+
+/** Optional car photo / document: empty, URL string, File/Blob, or null — never rejects null. */
+const optionalUpload = z
+  .custom(
+    (value) => {
+      if (value === null || value === undefined || value === '') return true;
+      if (typeof value === 'string') return true;
+      if (typeof File !== 'undefined' && value instanceof File) return true;
+      if (typeof Blob !== 'undefined' && value instanceof Blob) return true;
+      // FormImageUpload / FormFileUpload may wrap as { file }
+      if (value && typeof value === 'object' && value.file instanceof Blob) return true;
+      return false;
+    },
+    { message: 'Invalid file' }
+  )
+  .optional()
+  .nullable();
 
 export const customerSchema = z.object({
   name: req('Please enter the customer name')
@@ -131,12 +153,19 @@ export const carSchema = z.object({
   fuel: req('Please select fuel type'),
   transmission: req('Please select transmission'),
   seats: z.coerce.number().min(2).max(15),
-  status: z.enum(['Available', 'Booked', 'On Rent', 'Under Repair']),
+  status: z.enum(['Available', 'Booked', 'On Rent', 'Under Repair', 'Out of Service']),
   odometer: money('Odometer'),
   dailyRate: money('Daily rent').min(1, 'Please enter the daily rent'),
   hourlyRate: money('Hourly rent'),
-  insuranceExpiry: optionalStr, tokenExpiry: optionalStr, registrationExpiry: optionalStr, nextServiceDate: optionalStr, nextOilChangeDate: optionalStr,
-  image: optionalStr, registrationDoc: optionalStr, insuranceDoc: optionalStr,
+  insuranceExpiry: optionalStr,
+  tokenExpiry: optionalStr,
+  registrationExpiry: optionalStr,
+  nextServiceDate: optionalStr,
+  nextOilChangeDate: optionalStr,
+  // Optional uploads: accept "", null, undefined, existing URL, or a newly picked File/Blob
+  image: optionalUpload,
+  registrationDoc: optionalUpload,
+  insuranceDoc: optionalUpload,
 });
 
 export const serviceSchema = z.object({

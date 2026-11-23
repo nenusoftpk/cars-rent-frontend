@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useMemo } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
-import { Save } from 'lucide-react';
+import { Save, ChevronLeft, ChevronRight } from 'lucide-react';
 
 import AppModal from '@/components/modals/AppModal';
 import Tabs from '@/components/common/Tabs';
@@ -54,9 +54,9 @@ const EMPTY = {
   registrationExpiry: '',
   nextServiceDate: '',
   nextOilChangeDate: '',
-  image: null,           // File | existing URL string
+  image: null, // File | existing URL string
   registrationDoc: null, // optional
-  insuranceDoc: null,    // optional
+  insuranceDoc: null, // optional
 };
 
 // Map every field to its tab so validation jumps to the correct tab
@@ -81,6 +81,41 @@ const TAB_OF = {
   nextServiceDate: 'maintenance',
   nextOilChangeDate: 'maintenance',
   image: 'basic',
+};
+
+const TAB_ORDER = ['basic', 'pricing', 'documents', 'maintenance'];
+
+const TAB_LABELS = {
+  basic: 'Basic Information',
+  pricing: 'Pricing',
+  documents: 'Documents',
+  maintenance: 'Maintenance',
+};
+
+/** Fields validated when leaving each tab (Next) or when jumping forward */
+const TAB_FIELDS = {
+  basic: [
+    'brand',
+    'model',
+    'year',
+    'plate',
+    'color',
+    'fuel',
+    'transmission',
+    'seats',
+    'odometer',
+    'status',
+    'image',
+  ],
+  pricing: ['dailyRate', 'hourlyRate'],
+  documents: [
+    'insuranceExpiry',
+    'tokenExpiry',
+    'registrationExpiry',
+    'registrationDoc',
+    'insuranceDoc',
+  ],
+  maintenance: ['nextServiceDate', 'nextOilChangeDate'],
 };
 
 // FormImageUpload / FormFileUpload may hold a File, a compressed Blob, a { file } wrapper,
@@ -117,6 +152,8 @@ const ALL_MODELS = Object.values(BRAND_MODELS || {}).flat();
 export default function CarFormModal({ open, car, onClose }) {
   const editing = !!car?.id;
   const [tab, setTab] = useState('basic');
+  // Highest step index the user has unlocked by passing validation
+  const [maxStep, setMaxStep] = useState(0);
 
   const [add, { isLoading: adding }] = useAddCarMutation();
   const [update, { isLoading: saving }] = useUpdateCarMutation();
@@ -132,10 +169,13 @@ export default function CarFormModal({ open, car, onClose }) {
     resolver: zodResolver(carSchema),
     defaultValues: EMPTY,
     shouldFocusError: true,
+    mode: 'onSubmit',
   });
 
   const brandValue = form.watch('brand');
   const busy = adding || saving;
+  const stepIndex = TAB_ORDER.indexOf(tab);
+  const isLastStep = stepIndex === TAB_ORDER.length - 1;
 
   // Suggestions for the currently typed brand (case-insensitive contains)
   const brandSuggestions = useMemo(() => {
@@ -156,6 +196,7 @@ export default function CarFormModal({ open, car, onClose }) {
   useEffect(() => {
     if (!open) return;
     setTab('basic');
+    setMaxStep(0);
 
     // Only Available / Under Repair / Out of Service can be chosen by hand
     initialStatus.current = car?.manualStatus || 'Available';
@@ -170,7 +211,7 @@ export default function CarFormModal({ open, car, onClose }) {
       fuel: car?.fuel || car?.fuelType || 'Petrol',
       seats: car?.seats ?? car?.seatingCapacity ?? 5,
       image: car?.image || car?.images?.[0] || null,
-      // keep null for optional file fields – schema should treat them as optional
+      // keep null for optional file fields – schema treats them as optional
       registrationDoc: car?.registrationDoc || car?.registrationDocument || null,
       insuranceDoc: car?.insuranceDoc || car?.insuranceDocument || null,
       tokenExpiry: car?.tokenExpiry || car?.tokenTaxExpiry || '',
@@ -223,16 +264,16 @@ export default function CarFormModal({ open, car, onClose }) {
       brand: values.brand,
       model: values.model,
       year: values.year,
-      plate: values.plate,                 // → numberPlate
+      plate: values.plate, // → numberPlate
       color: values.color,
-      fuel: values.fuel,                   // → fuelType
+      fuel: values.fuel, // → fuelType
       transmission: values.transmission,
-      seats: values.seats,                 // → seatingCapacity
+      seats: values.seats, // → seatingCapacity
       odometer: values.odometer,
-      dailyRate: values.dailyRate,         // → dailyRent
-      hourlyRate: values.hourlyRate,       // → hourlyRent
+      dailyRate: values.dailyRate, // → dailyRent
+      hourlyRate: values.hourlyRate, // → hourlyRent
       insuranceExpiry: values.insuranceExpiry,
-      tokenExpiry: values.tokenExpiry,     // → tokenTaxExpiry
+      tokenExpiry: values.tokenExpiry, // → tokenTaxExpiry
       registrationExpiry: values.registrationExpiry,
       nextServiceDate: values.nextServiceDate,
       nextOilChangeDate: values.nextOilChangeDate,
@@ -338,16 +379,75 @@ export default function CarFormModal({ open, car, onClose }) {
     const targetTab = TAB_OF[first] || 'basic';
     setTab(targetTab);
 
-    // Friendly message that mentions the tab so user is not confused
-    const tabLabel = {
-      basic: 'Basic Information',
-      pricing: 'Pricing',
-      documents: 'Documents',
-      maintenance: 'Maintenance',
-    }[targetTab] || targetTab;
-
+    const tabLabel = TAB_LABELS[targetTab] || targetTab;
     toast.error(`Please check the highlighted fields in the “${tabLabel}” tab.`);
   };
+
+  /** Validate only the fields that belong to the given tab */
+  const validateTab = async (tabKey) => {
+    const fields = TAB_FIELDS[tabKey] || [];
+    if (!fields.length) return true;
+    return form.trigger(fields, { shouldFocus: true });
+  };
+
+  const goNext = async (e) => {
+    e?.preventDefault?.();
+    e?.stopPropagation?.();
+    const ok = await validateTab(tab);
+    if (!ok) return;
+    const nextIdx = Math.min(stepIndex + 1, TAB_ORDER.length - 1);
+    setMaxStep((m) => Math.max(m, nextIdx));
+    setTab(TAB_ORDER[nextIdx]);
+  };
+
+  const goBack = (e) => {
+    e?.preventDefault?.();
+    e?.stopPropagation?.();
+    if (stepIndex <= 0) return;
+    setTab(TAB_ORDER[stepIndex - 1]);
+  };
+
+  /**
+   * Tab bar click: allow free navigation to any already-unlocked step.
+   * Jumping ahead requires validating every skipped tab in order.
+   */
+  const handleTabChange = async (next) => {
+    if (next === tab) return;
+    const nextIdx = TAB_ORDER.indexOf(next);
+    if (nextIdx < 0) return;
+
+    // Going back or revisiting an unlocked step — always allowed
+    if (nextIdx <= maxStep) {
+      setTab(next);
+      return;
+    }
+
+    // Moving forward: validate each intermediate tab (including current)
+    for (let i = stepIndex; i < nextIdx; i++) {
+      const key = TAB_ORDER[i];
+      const ok = await validateTab(key);
+      if (!ok) {
+        setTab(key);
+        toast.error(
+          `Please complete the required fields in “${TAB_LABELS[key]}” before continuing.`
+        );
+        return;
+      }
+      setMaxStep((m) => Math.max(m, i + 1));
+    }
+    setTab(next);
+  };
+
+  const tabItems = TAB_ORDER.map((value, i) => {
+    const completed = i < maxStep || (i === maxStep && i < stepIndex);
+    const hasError = Object.keys(form.formState.errors || {}).some(
+      (f) => TAB_OF[f] === value
+    );
+    let label = TAB_LABELS[value];
+    if (hasError) label = `⚠ ${label}`;
+    else if (completed || i < stepIndex) label = `✓ ${label}`;
+    return { value, label };
+  });
 
   return (
     <AppModal
@@ -355,34 +455,61 @@ export default function CarFormModal({ open, car, onClose }) {
       onClose={onClose}
       size="lg"
       title={editing ? 'Edit Car' : 'Add Car'}
-      subtitle="Fields marked * are required."
+      subtitle="Fields marked * are required. Complete each step to continue."
       footer={
-        <>
-          <button className="btn btn-neutral" onClick={onClose} disabled={busy}>
-            Cancel
-          </button>
-          <button
-            className="btn btn-primary"
-            form="car-form"
-            type="submit"
-            disabled={busy}
-          >
-            <Save size={16} />
-            {busy ? 'Saving…' : editing ? 'Save Changes' : 'Save Car'}
-          </button>
-        </>
+        <div className="flex flex-wrap items-center gap-2 w-full">
+          {stepIndex > 0 ? (
+            <button
+              type="button"
+              className="btn btn-neutral"
+              onClick={goBack}
+              disabled={busy}
+            >
+              <ChevronLeft size={16} />
+              Back
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-neutral"
+              onClick={onClose}
+              disabled={busy}
+            >
+              Cancel
+            </button>
+          )}
+
+          <div className="flex-1" />
+
+          {!isLastStep ? (
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={goNext}
+              disabled={busy}
+            >
+              Next
+              <ChevronRight size={16} />
+            </button>
+          ) : (
+            <button
+              className="btn btn-primary"
+              form="car-form"
+              type="submit"
+              disabled={busy}
+            >
+              <Save size={16} />
+              {busy ? 'Saving…' : editing ? 'Save Changes' : 'Save Car'}
+            </button>
+          )}
+        </div>
       }
     >
       <Tabs
         value={tab}
-        onChange={setTab}
+        onChange={handleTabChange}
         className="mb-4"
-        tabs={[
-          { value: 'basic', label: 'Basic Information' },
-          { value: 'pricing', label: 'Pricing' },
-          { value: 'documents', label: 'Documents' },
-          { value: 'maintenance', label: 'Maintenance' },
-        ]}
+        tabs={tabItems}
       />
 
       <Form

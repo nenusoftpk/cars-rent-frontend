@@ -60,6 +60,7 @@ const CUSTOMER_TEXT_FIELDS = [
   "notes",
   "status",
   "customerCode",
+  "biometricConsent",          // ← required by backend when uploading thumb
   ...GUARANTOR_TEXT_FIELDS,
 ];
 
@@ -68,6 +69,7 @@ const CUSTOMER_IMAGE_FIELDS = [
   "cnicFront",
   "cnicBack",
   "licenseImage",
+  "thumbImage",                // ← fingerprint image
   ...GUARANTOR_IMAGE_FIELDS,
 ];
 
@@ -205,6 +207,16 @@ function mapCustomer(customer) {
       customer.licenseNo ??
       customer.licenseNumber ??
       "",
+    // Fingerprint availability (never the encrypted payload)
+    hasFingerprint: Boolean(customer.hasFingerprint),
+    biometric: customer.biometric
+      ? {
+          available: Boolean(customer.biometric.available),
+          scannedAt: customer.biometric.scannedAt ?? null,
+          // Only present for authorised users on detail responses
+          thumbImage: customer.biometric.thumbImage || null,
+        }
+      : null,
   };
 }
 
@@ -460,6 +472,8 @@ function toCustomerFormData(body = {}) {
 }
 
 function buildCustomerBody(body = {}) {
+  // Fingerprint uploads are ALWAYS online-only and must go as multipart.
+  // We never put the image into offline queues.
   return hasNewFiles(body)
     ? toCustomerFormData(body)
     : toCustomerJSON(body);
