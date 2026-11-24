@@ -22,7 +22,7 @@ import ExportButtons from '@/components/tables/ExportButtons';
 import ConfirmDialog from '@/components/modals/ConfirmDialog';
 import CustomerFormModal from '@/features/customers/CustomerFormModal';
 import CustomerDrawer from '@/features/customers/CustomerDrawer';
-import { useGetCustomersQuery, useDeleteCustomerMutation, customerApi } from '@/redux/api/customerApi';
+import { useGetCustomersQuery, useDeleteCustomerMutation, useLazyGetCustomerQuery, customerApi } from '@/redux/api/customerApi';
 import { errorMessage } from '@/redux/api/baseApi';
 import { useListParams } from '@/hooks/useListParams';
 import { useExportAll } from '@/hooks/useExportAll';
@@ -41,7 +41,23 @@ export default function CustomersPage() {
   const { data, isLoading, isFetching, error, refetch } = useGetCustomersQuery(apiParams);
   const exportAll = useExportAll(customerApi.endpoints.getCustomers, apiParams);
   const [form, setForm] = useState(null); const [viewId, setViewId] = useState(null); const [del, setDel] = useState(null);
-  const [remove, { isLoading: deleting }] = useDeleteCustomerMutation(); const sm = data?.summary; const L = isLoading;
+  const [remove, { isLoading: deleting }] = useDeleteCustomerMutation();
+  const [fetchCustomer] = useLazyGetCustomerQuery();
+  const sm = data?.summary; const L = isLoading;
+
+  const canViewSensitive = can('sensitive:view') || can('customers.documents.view');
+
+  /** Always load the full customer (documents + guarantors) before printing. */
+  const handlePrint = async (row) => {
+    try {
+      toast.message('Preparing full customer print…');
+      const full = await fetchCustomer(row.id).unwrap();
+      printHtml(customerDoc(full, canViewSensitive), 'Customer');
+    } catch (e) {
+      toast.error(errorMessage(e) || 'Could not load full details; printing basic info.');
+      printHtml(customerDoc(row, canViewSensitive), 'Customer');
+    }
+  };
 
   const confirmDelete = async () => { try { await remove(del.id).unwrap(); toast.success('Customer deleted'); setDel(null); } catch (e) { toast.error(errorMessage(e)); setDel(null); } };
   const columns = [
@@ -58,7 +74,7 @@ export default function CustomersPage() {
       { label: 'View', icon: Eye, onClick: () => setViewId(r.id) }, { label: 'Edit', icon: Pencil, onClick: () => setForm(r), hidden: !can('customers:edit') },
       { label: 'New Booking', icon: CalendarPlus, onClick: () => router.push(`/bookings/new?customerId=${r.id}`), hidden: !can('bookings:create') },
       { label: 'Customer Khata', icon: BookOpen, onClick: () => router.push(`/customer-ledger?customerId=${r.id}`), hidden: !can('ledger:view') },
-      { label: 'Print Details', icon: Printer, onClick: () => printHtml(customerDoc(r, can('sensitive:view')), 'Customer'), hidden: !can('customers:print') },
+      { label: 'Print Details', icon: Printer, onClick: () => handlePrint(r), hidden: !can('customers:print') },
       { label: 'Delete', icon: Trash2, danger: true, onClick: () => setDel(r), hidden: !can('customers:delete') }]} /> },
   ];
   return (

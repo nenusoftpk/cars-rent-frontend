@@ -40,6 +40,7 @@ const GUARANTOR_IMAGE_FIELDS = GUARANTOR_NUMBERS.flatMap((n) => [
   `guarantor${n}Photo`,
   `guarantor${n}CnicFront`,
   `guarantor${n}CnicBack`,
+  `guarantor${n}ThumbImage`,
 ]);
 
 const CUSTOMER_TEXT_FIELDS = [
@@ -60,7 +61,9 @@ const CUSTOMER_TEXT_FIELDS = [
   "notes",
   "status",
   "customerCode",
-  "biometricConsent",          // ← required by backend when uploading thumb
+  "biometricConsent",
+  "guarantor1BiometricConsent",
+  "guarantor2BiometricConsent",
   ...GUARANTOR_TEXT_FIELDS,
 ];
 
@@ -186,6 +189,14 @@ function mapGuarantor(guarantor) {
     cnicFront: g.cnicFront ?? "",
     cnicBack: g.cnicBack ?? "",
     locked: Boolean(g.locked),
+    hasFingerprint: Boolean(g.hasFingerprint || g.biometric?.available),
+    biometric: g.biometric
+      ? {
+        available: Boolean(g.biometric.available),
+        scannedAt: g.biometric.scannedAt ?? null,
+        thumbImage: g.biometric.thumbImage || null,
+      }
+      : null,
   };
 }
 
@@ -211,11 +222,11 @@ function mapCustomer(customer) {
     hasFingerprint: Boolean(customer.hasFingerprint),
     biometric: customer.biometric
       ? {
-          available: Boolean(customer.biometric.available),
-          scannedAt: customer.biometric.scannedAt ?? null,
-          // Only present for authorised users on detail responses
-          thumbImage: customer.biometric.thumbImage || null,
-        }
+        available: Boolean(customer.biometric.available),
+        scannedAt: customer.biometric.scannedAt ?? null,
+        // Only present for authorised users on detail responses
+        thumbImage: customer.biometric.thumbImage || null,
+      }
       : null,
   };
 }

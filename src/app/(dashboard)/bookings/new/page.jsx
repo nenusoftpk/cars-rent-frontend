@@ -37,6 +37,7 @@ import Form from '@/components/forms/Form';
 import FormInput from '@/components/forms/FormInput';
 import FormImageUpload from '@/components/forms/FormImageUpload';
 import FormSelect from '@/components/forms/FormSelect';
+import FormLocationCombobox from '@/components/forms/FormLocationCombobox';
 import FormDatePicker from '@/components/forms/FormDatePicker';
 import FormTimePicker from '@/components/forms/FormTimePicker';
 import FormCheckbox from '@/components/forms/FormCheckbox';
@@ -59,6 +60,7 @@ import {
   useCreateBookingMutation,
   useUpdateBookingMutation,
   useGetBookingQuery,
+  useGetBookingsQuery,
   payMethod,
 } from '@/redux/api/bookingApi';
 import { useAddPaymentMutation } from '@/redux/api/paymentApi';
@@ -155,6 +157,30 @@ export default function NewBookingPage() {
     pageSize: 100,
   });
   const { data: drivers } = useGetDriversQuery({ status: 'Active', pageSize: 50 });
+
+  // Distinct pickup/return locations already saved on bookings (tenant DB)
+  const { data: pastBookings } = useGetBookingsQuery({
+    pageSize: 100,
+    sort: 'createdAt:desc',
+  });
+
+  const locationSuggestions = useMemo(() => {
+    const items = pastBookings?.items || [];
+    const set = new Set();
+    const out = [];
+    for (const b of items) {
+      for (const loc of [b.pickupLocation, b.returnLocation]) {
+        const v = String(loc || '').trim();
+        if (!v) continue;
+        if (v.toLowerCase() === 'same as pickup') continue;
+        const key = v.toLowerCase();
+        if (set.has(key)) continue;
+        set.add(key);
+        out.push(v);
+      }
+    }
+    return out;
+  }, [pastBookings]);
 
   const form = useForm({
     resolver: zodResolver(bookingSchema),
@@ -1057,17 +1083,16 @@ export default function NewBookingPage() {
                     }
                     disabled={staffLoading || staffError}
                   />
-                  <FormSelect
+                  <FormLocationCombobox
                     name="pickupLocation"
                     label="Pick Up Location"
-                    options={LOCATIONS}
-                    placeholder={null}
+                    suggestions={locationSuggestions}
                   />
-                  <FormSelect
+                  <FormLocationCombobox
                     name="returnLocation"
                     label="Return Location"
-                    options={['Same as Pickup', ...LOCATIONS]}
-                    placeholder={null}
+                    extras={['Same as Pickup']}
+                    suggestions={locationSuggestions}
                   />
                   <FormInput
                     name="instructions"
