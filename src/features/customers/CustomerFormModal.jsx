@@ -219,7 +219,7 @@ function GuarantorSection({
   return (
     <div
       className={`rounded-xl border p-3 sm:p-4 transition-colors ${
-        enabled ? 'border-primary/40 bg-primary/[0.03]' : 'border-line bg-soft'
+        enabled ? 'border-primary/40 bg-primary/0.03' : 'border-line bg-soft'
       }`}
     >
       <label className="flex items-center gap-2.5 cursor-pointer select-none">
@@ -266,9 +266,7 @@ function GuarantorSection({
                     width="w-full"
                     height="h-28"
                   />
-                  {message && (
-                    <p className="field-error px-1 pb-1">{message}</p>
-                  )}
+
                 </div>
               );
             })}
@@ -319,7 +317,7 @@ function GuarantorThumbSection({
   }
 
   return (
-    <div className="rounded-xl border border-primary/20 bg-primary/[0.02] p-3 space-y-3">
+    <div className="rounded-xl border border-primary/20 bg-primary/0.02 p-3 space-y-3">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Fingerprint size={16} className="text-primary" />
@@ -447,7 +445,7 @@ function ScanThumbSection({
   }
 
   return (
-    <div className="rounded-xl border border-primary/30 bg-primary/[0.03] p-4 space-y-4">
+    <div className="rounded-xl border border-primary/30 bg-primary/0.03 p-4 space-y-4">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Fingerprint size={18} className="text-primary" />
@@ -967,7 +965,7 @@ export default function CustomerFormModal({ open, customer, onClose, onSaved }) 
               hint="Face clearly visible"
             />
 
-            <div className="flex-1 min-w-[260px] grid sm:grid-cols-2 gap-3 content-start">
+            <div className="flex-1 min-w-260 grid sm:grid-cols-2 gap-3 content-start">
               <FormInput
                 name="name"
                 label="Full Name"

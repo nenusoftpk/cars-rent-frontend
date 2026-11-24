@@ -756,7 +756,7 @@ export default function NewBookingPage() {
               {cust && (
                 <div className="mt-3 rounded-xl border border-line bg-soft p-3 flex flex-wrap gap-3 sm:gap-4 items-center">
                   <Avatar src={cust.photo} name={cust.name} size={56} />
-                  <div className="min-w-[140px] flex-1">
+                  <div className="min-w-140 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
                       <b className="text-base">{cust.name}</b>
                       {cust.type && <StatusBadge status={cust.type} />}
@@ -832,7 +832,7 @@ export default function NewBookingPage() {
                     className="absolute left-3 top-1/2 -translate-y-1/2 text-muted"
                   />
                   <input
-                    className="input !h-9 pl-8 !w-40 sm:!w-56"
+                    className="input h-9! pl-8 w-40! sm:w-56!"
                     placeholder="Search car…"
                     value={carSearch}
                     onChange={(e) => setCarSearch(e.target.value)}
@@ -867,7 +867,7 @@ export default function NewBookingPage() {
                 </p>
               ) : (
                 <div
-                  className="grid gap-3 grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 max-h-[420px] overflow-y-auto p-1"
+                  className="grid gap-3 grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 max-h-420 overflow-y-auto p-1"
                   role="radiogroup"
                   aria-label="Cars"
                 >
@@ -1130,7 +1130,7 @@ export default function NewBookingPage() {
                           placeholder="0"
                           hint="Charged per day. Multiplied by rental period."
                         />
-                        <div className="rounded-xl bg-white border border-line px-3 py-2 text-sm min-w-[140px]">
+                        <div className="rounded-xl bg-white border border-line px-3 py-2 text-sm min-w-140">
                           <p className="text-xs text-muted">Total driver charges</p>
                           <p className="font-extrabold text-primary">
                             {formatPKR(driverCharges)}
@@ -1667,7 +1667,7 @@ export default function NewBookingPage() {
             </div>
 
             {/* Scan */}
-            <div className="rounded-xl border border-primary/30 bg-primary/[0.03] p-3 space-y-2">
+            <div className="rounded-xl border border-primary/30 bg-primary/0.03 p-3 space-y-2">
               <p className="font-semibold text-sm flex items-center gap-2">
                 <Fingerprint size={15} className="text-primary" /> Scan with SecuGen
               </p>

@@ -27,7 +27,7 @@ import { printHtml, customerDoc } from '@/lib/printTemplates';
 const Info = ({ label, children }) => (
   <div className="rounded-lg bg-soft border border-line px-3 py-2">
     <p className="text-[11px] text-muted">{label}</p>
-    <p className="text-sm font-semibold break-words">{children || '-'}</p>
+    <p className="text-sm font-semibold wrap-break-word">{children || '-'}</p>
   </div>
 );
 
