@@ -41,7 +41,7 @@ function DocImage({ label, url, locked }) {
 
   return (
     <div className="rounded-xl border border-line overflow-hidden bg-card">
-      <div className="aspect-[16/10] bg-soft grid place-items-center">
+      <div className="aspect-16/10 bg-soft grid place-items-center">
         {url && !failed ? (
           <a
             href={url}

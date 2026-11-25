@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
-import { AlertCircle, ArrowRight, Loader2, Lock, Mail } from "lucide-react";
+import { AlertCircle, ArrowRight, Loader2, Lock, Mail, UserRound } from "lucide-react";
 
 import AuthLayout, {
   AppDownloadButtons,
@@ -28,6 +28,11 @@ import { useAuth } from "@/hooks/useAuth";
 // ======================================================
 
 const REMEMBER_KEY = "rent-a-car:remembered-email";
+
+const DEMO_CREDENTIALS = {
+  email: "demoadmin@gmail.com",
+  password: "Demo@12345",
+};
 
 function readRememberedEmail() {
   try {
@@ -65,6 +70,7 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const [serverError, setServerError] = useState("");
+  const [isDemoLogin, setIsDemoLogin] = useState(false);
 
   const form = useForm({
     resolver: zodResolver(loginSchema),
@@ -102,10 +108,11 @@ export default function LoginPage() {
     }
   }, [ready, expired]);
 
-  const onSubmit = async (values) => {
-    if (isLoading) return;
+  const handleLogin = async (values, demo = false) => {
+    if (isLoading || !ready || token) return;
 
     setServerError("");
+    setIsDemoLogin(demo);
 
     const email = values.email.trim().toLowerCase();
 
@@ -117,38 +124,66 @@ export default function LoginPage() {
 
       if (!result?.token || !result?.user) {
         const message = "Invalid login response from the server.";
+
         setServerError(message);
         toast.error(message);
         return;
       }
 
-      // Only update the remembered email after a successful login.
-      if (rememberMe) {
-        saveRememberedEmail(email);
-      } else {
-        clearRememberedEmail();
+      // Do not change remembered email during demo login.
+      if (!demo) {
+        if (rememberMe) {
+          saveRememberedEmail(email);
+        } else {
+          clearRememberedEmail();
+        }
       }
 
-      const firstName = result.user.name?.split(" ")[0] || "User";
+      const firstName =
+        result.user.name?.split(" ")[0] || "User";
 
-      toast.success(`Welcome back, ${firstName}!`);
+      toast.success(
+        demo
+          ? "Welcome to the Demo Account!"
+          : `Welcome back, ${firstName}!`
+      );
 
       const userRole = result.user.role;
 
       if (userRole === "super-admin") {
         router.replace("/super-admin/dashboard");
-      } else if (userRole === "admin" || userRole === "employee") {
+      } else if (
+        userRole === "admin" ||
+        userRole === "employee"
+      ) {
         router.replace("/dashboard");
       } else {
         toast.error("Your account role is not supported.");
       }
     } catch (error) {
-      const message = errorMessage(error, "Login failed. Please try again.");
+      const message = errorMessage(
+        error,
+        demo
+          ? "Demo login failed. Please try again."
+          : "Login failed. Please try again."
+      );
 
       setServerError(message);
       toast.error(message);
+    } finally {
+      setIsDemoLogin(false);
     }
   };
+
+  const onSubmit = (values) => {
+    return handleLogin(values, false);
+  };
+
+  const handleDemoLogin = () => {
+    return handleLogin(DEMO_CREDENTIALS, true);
+  };
+
+
 
   return (
     <AuthLayout
@@ -242,7 +277,7 @@ export default function LoginPage() {
           className="btn btn-primary h-11 w-full text-[15px] shadow-md shadow-primary/25 [@media(max-height:720px)]:h-10"
           disabled={isLoading || !ready || !!token}
         >
-          {isLoading ? (
+          {isLoading && !isDemoLogin ? (
             <>
               <Loader2 size={18} className="animate-spin" />
               Signing in...
@@ -258,8 +293,39 @@ export default function LoginPage() {
 
       <div className="mt-3 pb-4 [@media(max-height:720px)]:pb-3">
         <AuthActions>
+
+          {/* ================= DEMO LOGIN ================= */}
+
+          <button
+            type="button"
+            onClick={handleDemoLogin}
+            disabled={isLoading || !ready || !!token}
+            className="btn h-11 w-full bg-emerald-600 text-[15px] text-white shadow-md shadow-emerald-600/25 transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60 [@media(max-height:720px)]:h-10"
+          >
+            {isLoading && isDemoLogin ? (
+              <>
+                <Loader2
+                  size={18}
+                  className="animate-spin"
+                />
+                Opening Demo...
+              </>
+            ) : (
+              <>
+                <UserRound size={18} />
+                Demo Login
+              </>
+            )}
+          </button>
+
+          {/* ================= DEMO VIDEOS ================= */}
+
           <DemoVideosButton />
+
+          {/* ================= APP DOWNLOADS ================= */}
+
           <AppDownloadButtons />
+
         </AuthActions>
       </div>
     </AuthLayout>
