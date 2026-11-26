@@ -22,6 +22,7 @@ import {
 import AppModal from '@/components/modals/AppModal';
 import { useLazyGetCustomerQuery, useUpdateCustomerMutation } from '@/redux/api/customerApi';
 import { useLazyGetCarQuery } from '@/redux/api/carApi';
+import { useLazyGetBookingQuery } from '@/redux/api/bookingApi';
 import { errorMessage } from '@/redux/api/baseApi';
 import { useAuth } from '@/hooks/useAuth';
 import { printHtml, rentalAgreementDoc } from '@/lib/printTemplates';
@@ -32,6 +33,7 @@ export function useRentalAgreementPrint() {
   const { user } = useAuth();
   const [fetchCustomer] = useLazyGetCustomerQuery();
   const [fetchCar] = useLazyGetCarQuery();
+  const [fetchBooking] = useLazyGetBookingQuery();
   const [updateCustomer] = useUpdateCustomerMutation();
 
   const [bioModal, setBioModal] = useState(null); // { booking, customer, car }
@@ -65,50 +67,101 @@ export function useRentalAgreementPrint() {
   const startPrintAgreement = useCallback(
     async (booking, { customer: preCustomer, car: preCar } = {}) => {
       if (!booking) return;
+
       setLoading(true);
+
       try {
+        // Load latest saved booking details
+        const bookingId = booking.id || booking._id;
+
+        if (bookingId && isBrowserOnline()) {
+          try {
+            const latestBooking = await fetchBooking(
+              bookingId,
+              false
+            ).unwrap();
+
+            if (latestBooking) {
+              booking = {
+                ...booking,
+                ...latestBooking,
+              };
+            }
+          } catch (e) {
+            toast.error(
+              'Unable to load the latest booking details. Please try again.'
+            );
+            return;
+          }
+        }
+
         let customer = preCustomer || null;
         let car = preCar || null;
 
-        const customerId = booking.customerId || booking.customer?.id;
-        const carId = booking.carId || booking.car?.id;
+        const customerId =
+          booking.customerId || booking.customer?.id;
 
+        const carId =
+          booking.carId || booking.car?.id;
+
+        // Load complete customer details
         if (!customer && customerId) {
           try {
             customer = await fetchCustomer(customerId).unwrap();
           } catch {
-            /* fall back to booking snapshot fields */
+            /* Fall back to booking snapshot fields */
           }
         }
+
+        // Load complete car details
         if (!car && carId) {
           try {
             car = await fetchCar(carId).unwrap();
           } catch {
-            /* fall back to booking snapshot fields */
+            /* Fall back to booking snapshot fields */
           }
         }
 
-        // Normalise snapshot fields so the template still works without full records
+        // Prepare complete booking for printing
         const enrichedBooking = {
           ...booking,
-          customerName: booking.customerName || customer?.name,
-          customerMobile: booking.customerMobile || customer?.mobile,
-          carName: booking.carName || car?.name,
-          carPlate: booking.carPlate || car?.plate,
-          carImage: booking.carImage || car?.image,
+
+          customerName:
+            booking.customerName || customer?.name,
+
+          customerMobile:
+            booking.customerMobile || customer?.mobile,
+
+          carName:
+            booking.carName || car?.name,
+
+          carPlate:
+            booking.carPlate || car?.plate,
+
+          carImage:
+            booking.carImage || car?.image,
+
+          // Saved booking-specific Terms & Conditions
+          termsAndConditions: Array.isArray(
+            booking.termsAndConditions
+          )
+            ? booking.termsAndConditions
+            : [],
         };
 
         const thumbUrl =
           customer?.biometric?.thumbImage ||
           customer?.thumbImage ||
           null;
+
         const hasBio =
           Boolean(
             customer?.hasFingerprint ||
-              customer?.biometric?.available ||
-              thumbUrl
+            customer?.biometric?.available ||
+            thumbUrl
           ) && Boolean(thumbUrl);
 
+        // Print directly if fingerprint already exists
         if (hasBio) {
           printAgreement({
             booking: enrichedBooking,
@@ -117,16 +170,23 @@ export function useRentalAgreementPrint() {
             thumbImageUrl: thumbUrl,
             inkThumbBox: false,
           });
+
           return;
         }
 
-        // No stored biometric → choice modal
+        // Open biometric choice modal
         setThumbFile(null);
         setThumbPreview(null);
         setThumbConsent(false);
         setInkOnly(false);
         setScannerReady(null);
-        setBioModal({ booking: enrichedBooking, customer, car });
+
+        setBioModal({
+          booking: enrichedBooking,
+          customer,
+          car,
+        });
+
         try {
           const ok = await checkSecuGenAvailable();
           setScannerReady(ok);
@@ -137,7 +197,12 @@ export function useRentalAgreementPrint() {
         setLoading(false);
       }
     },
-    [fetchCustomer, fetchCar, printAgreement]
+    [
+      fetchBooking,
+      fetchCustomer,
+      fetchCar,
+      printAgreement,
+    ]
   );
 
   const handleScanThumb = async () => {

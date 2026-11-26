@@ -129,7 +129,13 @@ export default function NewBookingPage() {
   const editId = sp.get('edit');
   const [addCust, setAddCust] = useState(false);
   const [review, setReview] = useState(false);
-  const [successBooking, setSuccessBooking] = useState(null); // full mapped booking after create
+  const [successBooking, setSuccessBooking] = useState(null);
+  const [successTab, setSuccessTab] = useState('details');
+  const [bookingTerms, setBookingTerms] = useState([]);
+  const [savingTerms, setSavingTerms] = useState(false);
+
+  const canEditTerms =
+    user?.role === 'admin' || can('bookings.create');
   const [carStatus, setCarStatus] = useState('');
   const [carSearch, setCarSearch] = useState('');
   const [editRateOpen, setEditRateOpen] = useState(false);
@@ -423,6 +429,14 @@ export default function NewBookingPage() {
         toast.warning(
           'Additional charges were not saved with the booking. Add them when the car is returned.'
         );
+      // Load saved Terms & Conditions for this booking
+      setSuccessTab('details');
+
+      setBookingTerms(
+        Array.isArray(b.termsAndConditions)
+          ? [...b.termsAndConditions]
+          : []
+      );
 
       // Enrich with live form values for the success modal display
       setSuccessBooking({
@@ -513,9 +527,114 @@ export default function NewBookingPage() {
     }
   };
 
+  // ---------- Booking Terms & Conditions ----------
+
+  const termsChanged =
+    JSON.stringify(bookingTerms) !==
+    JSON.stringify(successBooking?.termsAndConditions || []);
+
+  const addBookingTerm = () => {
+    if (!canEditTerms || savingTerms) return;
+
+    setBookingTerms((prev) => [...prev, '']);
+  };
+
+  const editBookingTerm = (index, value) => {
+    if (!canEditTerms || savingTerms) return;
+
+    setBookingTerms((prev) =>
+      prev.map((term, i) =>
+        i === index ? value : term
+      )
+    );
+  };
+
+  const removeBookingTerm = (index) => {
+    if (!canEditTerms || savingTerms) return;
+
+    setBookingTerms((prev) =>
+      prev.filter((_, i) => i !== index)
+    );
+  };
+
+  const discardBookingTerms = () => {
+    if (savingTerms) return;
+
+    setBookingTerms([
+      ...(successBooking?.termsAndConditions || []),
+    ]);
+  };
+
+  const saveBookingTerms = async () => {
+    if (
+      !successBooking?.id ||
+      !canEditTerms ||
+      savingTerms ||
+      !termsChanged
+    ) {
+      return;
+    }
+
+    if (
+      !isBrowserOnline() ||
+      successBooking._offline ||
+      successBooking._pendingSync
+    ) {
+      toast.error(
+        'Please connect to the internet and sync the booking first.'
+      );
+      return;
+    }
+
+    setSavingTerms(true);
+
+    try {
+      const terms = bookingTerms
+        .map((term) => term.trim())
+        .filter(Boolean);
+
+      const saved = await update({
+        id: successBooking.id,
+        termsAndConditions: terms,
+      }).unwrap();
+
+      if (saved?._offline || saved?._pendingSync) {
+        toast.warning('Terms are pending synchronization.');
+        return;
+      }
+
+      if (!Array.isArray(saved?.termsAndConditions)) {
+        toast.error('Unable to verify saved Terms & Conditions.');
+        return;
+      }
+
+      const savedTerms = saved.termsAndConditions;
+
+      setSuccessBooking((prev) => ({
+        ...prev,
+        termsAndConditions: savedTerms,
+      }));
+
+      setBookingTerms([...savedTerms]);
+
+      toast.success(
+        'Terms & Conditions saved successfully.'
+      );
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setSavingTerms(false);
+    }
+  };
+
   // ---------- Success modal actions ----------
   const resetForNewBooking = () => {
+    if (savingTerms || termsChanged) return;
+
     setSuccessBooking(null);
+    setSuccessTab('details');
+    setBookingTerms([]);
+
     reqId.current = uid('bk');
     form.reset({
       ...form.getValues(),
@@ -549,14 +668,35 @@ export default function NewBookingPage() {
   };
 
   const goToBooking = () => {
+    if (savingTerms || termsChanged) return;
+
     const id = successBooking?.id;
+
     setSuccessBooking(null);
-    if (id) router.push(`/bookings/${id}`);
-    else router.push('/bookings');
+    setSuccessTab('details');
+    setBookingTerms([]);
+
+    if (id) {
+      router.push(`/bookings/${id}`);
+    } else {
+      router.push('/bookings');
+    }
   };
 
   // ---------- Print + biometric flow ----------
   const startPrintFlow = async (bookingOverride) => {
+    if (savingTerms) return;
+
+    if (termsChanged) {
+      setSuccessTab('terms');
+
+      toast.error(
+        'Please save or discard Terms & Conditions before printing.'
+      );
+
+      return;
+    }
+
     const b = bookingOverride || successBooking;
     if (!b) return;
     const customerId = b.customerId || w.customerId;
@@ -1429,22 +1569,27 @@ export default function NewBookingPage() {
             <button
               type="button"
               className="btn btn-outline flex-1"
+              disabled={savingTerms}
               onClick={() => startPrintFlow(successBooking)}
             >
               <Printer size={16} />
               Print Booking
             </button>
+
             <button
               type="button"
               className="btn btn-primary flex-1"
+              disabled={savingTerms || termsChanged}
               onClick={resetForNewBooking}
             >
               <Plus size={16} />
               New Booking
             </button>
+
             <button
               type="button"
               className="btn btn-success flex-1"
+              disabled={savingTerms || termsChanged}
               onClick={goToBooking}
             >
               <CircleCheck size={16} />
@@ -1455,92 +1600,239 @@ export default function NewBookingPage() {
       >
         {successBooking && (
           <div className="space-y-4">
-            <div className="flex items-center gap-3 rounded-xl bg-success/10 border border-success/25 p-3">
-              <CircleCheck size={28} className="text-success shrink-0" />
-              <div>
-                <p className="font-bold text-base">
-                  {successBooking.number || successBooking.bookingNumber}
-                </p>
-                <p className="text-xs text-muted">
-                  Invoice {successBooking.invoiceNo || successBooking.invoiceNumber || '—'}
-                </p>
-              </div>
+            {/* Success Modal Tabs */}
+            <div className="grid grid-cols-2 gap-2 rounded-xl bg-soft border border-line p-1">
+              {[
+                ['details', 'Booking Details'],
+                ['terms', 'Terms & Conditions'],
+              ].map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setSuccessTab(value)}
+                  className={cn(
+                    'rounded-lg px-2 py-2.5 text-xs sm:text-sm font-semibold transition-colors',
+                    successTab === value
+                      ? 'bg-primary text-white'
+                      : 'text-muted hover:text-primary'
+                  )}
+                >
+                  {label}
+
+                  {value === 'terms' && (
+                    <span className="ml-1">
+                      ({bookingTerms.length})
+                    </span>
+                  )}
+                </button>
+              ))}
             </div>
 
-            <div className="grid sm:grid-cols-2 gap-3 text-sm">
-              <div className="rounded-xl border border-line p-3 space-y-1">
-                <p className="text-xs font-semibold text-muted uppercase tracking-wide">Customer</p>
-                <p className="font-bold">{successBooking.customerName}</p>
-                <p className="text-muted">{successBooking.customerMobile}</p>
-                {cust?.cnic && <p className="text-xs text-muted">CNIC: {cust.cnic}</p>}
-              </div>
-              <div className="rounded-xl border border-line p-3 space-y-1">
-                <p className="text-xs font-semibold text-muted uppercase tracking-wide">Car</p>
-                <div className="flex gap-2 items-center">
-                  {successBooking.carImage && (
-                    <SmartImage
-                      src={successBooking.carImage}
-                      alt=""
-                      width={64}
-                      height={40}
-                      className="rounded"
-                    />
-                  )}
+            {successTab === 'details' && (
+              <>
+                <div className="flex items-center gap-3 rounded-xl bg-success/10 border border-success/25 p-3">
+                  <CircleCheck size={28} className="text-success shrink-0" />
                   <div>
-                    <p className="font-bold">{successBooking.carName}</p>
-                    <p className="text-muted text-xs">{successBooking.carPlate}</p>
+                    <p className="font-bold text-base">
+                      {successBooking.number || successBooking.bookingNumber}
+                    </p>
+                    <p className="text-xs text-muted">
+                      Invoice {successBooking.invoiceNo || successBooking.invoiceNumber || '—'}
+                    </p>
                   </div>
                 </div>
-              </div>
-            </div>
 
-            <dl className="text-sm space-y-1.5 rounded-xl bg-soft border border-line p-3">
-              <div className="flex justify-between">
-                <dt className="text-muted">Pick Up</dt>
-                <dd className="font-semibold">{fmtDateTime(successBooking.pickupAt)}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-muted">Return</dt>
-                <dd className="font-semibold">{fmtDateTime(successBooking.returnAt)}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-muted">Duration</dt>
-                <dd className="font-semibold">
-                  {successBooking.days} day{successBooking.days === 1 ? '' : 's'}
-                </dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-muted">Daily rent</dt>
-                <dd className="font-semibold">{formatPKR(successBooking.rate)}</dd>
-              </div>
-              <div className="flex justify-between border-t border-line pt-1.5">
-                <dt className="font-bold">Total Bill</dt>
-                <dd className="font-extrabold">{formatPKR(successBooking.total)}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-muted">Advance</dt>
-                <dd className="font-semibold">
-                  {formatPKR(successBooking.paid)}
-                  {successBooking.method ? ` (${successBooking.method})` : ''}
-                </dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-muted">Security deposit</dt>
-                <dd className="font-semibold">{formatPKR(successBooking.depositPaid)}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="font-bold">Remaining</dt>
-                <dd className="font-extrabold text-success">
-                  {formatPKR(successBooking.balance)}
-                </dd>
-              </div>
-              {successBooking.staffName && (
-                <div className="flex justify-between">
-                  <dt className="text-muted">Employee</dt>
-                  <dd className="font-semibold">{successBooking.staffName}</dd>
+                <div className="grid sm:grid-cols-2 gap-3 text-sm">
+                  <div className="rounded-xl border border-line p-3 space-y-1">
+                    <p className="text-xs font-semibold text-muted uppercase tracking-wide">Customer</p>
+                    <p className="font-bold">{successBooking.customerName}</p>
+                    <p className="text-muted">{successBooking.customerMobile}</p>
+                    {cust?.cnic && <p className="text-xs text-muted">CNIC: {cust.cnic}</p>}
+                  </div>
+                  <div className="rounded-xl border border-line p-3 space-y-1">
+                    <p className="text-xs font-semibold text-muted uppercase tracking-wide">Car</p>
+                    <div className="flex gap-2 items-center">
+                      {successBooking.carImage && (
+                        <SmartImage
+                          src={successBooking.carImage}
+                          alt=""
+                          width={64}
+                          height={40}
+                          className="rounded"
+                        />
+                      )}
+                      <div>
+                        <p className="font-bold">{successBooking.carName}</p>
+                        <p className="text-muted text-xs">{successBooking.carPlate}</p>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-              )}
-            </dl>
+
+                <dl className="text-sm space-y-1.5 rounded-xl bg-soft border border-line p-3">
+                  <div className="flex justify-between">
+                    <dt className="text-muted">Pick Up</dt>
+                    <dd className="font-semibold">{fmtDateTime(successBooking.pickupAt)}</dd>
+                  </div>
+                  <div className="flex justify-between">
+                    <dt className="text-muted">Return</dt>
+                    <dd className="font-semibold">{fmtDateTime(successBooking.returnAt)}</dd>
+                  </div>
+                  <div className="flex justify-between">
+                    <dt className="text-muted">Duration</dt>
+                    <dd className="font-semibold">
+                      {successBooking.days} day{successBooking.days === 1 ? '' : 's'}
+                    </dd>
+                  </div>
+                  <div className="flex justify-between">
+                    <dt className="text-muted">Daily rent</dt>
+                    <dd className="font-semibold">{formatPKR(successBooking.rate)}</dd>
+                  </div>
+                  <div className="flex justify-between border-t border-line pt-1.5">
+                    <dt className="font-bold">Total Bill</dt>
+                    <dd className="font-extrabold">{formatPKR(successBooking.total)}</dd>
+                  </div>
+                  <div className="flex justify-between">
+                    <dt className="text-muted">Advance</dt>
+                    <dd className="font-semibold">
+                      {formatPKR(successBooking.paid)}
+                      {successBooking.method ? ` (${successBooking.method})` : ''}
+                    </dd>
+                  </div>
+                  <div className="flex justify-between">
+                    <dt className="text-muted">Security deposit</dt>
+                    <dd className="font-semibold">{formatPKR(successBooking.depositPaid)}</dd>
+                  </div>
+                  <div className="flex justify-between">
+                    <dt className="font-bold">Remaining</dt>
+                    <dd className="font-extrabold text-success">
+                      {formatPKR(successBooking.balance)}
+                    </dd>
+                  </div>
+                  {successBooking.staffName && (
+                    <div className="flex justify-between">
+                      <dt className="text-muted">Employee</dt>
+                      <dd className="font-semibold">{successBooking.staffName}</dd>
+                    </div>
+                  )}
+                </dl>
+              </>
+            )}
+
+            {/* Terms & Conditions Tab */}
+            {successTab === 'terms' && (
+              <div className="space-y-3">
+
+                <div className="rounded-xl border border-primary/20 bg-primary/5 p-3">
+                  <h3 className="font-bold">
+                    Rental Terms & Conditions
+                  </h3>
+
+                  <p className="text-xs text-muted mt-1">
+                    Add, edit or remove conditions for this
+                    booking. Default business terms will
+                    remain unchanged.
+                  </p>
+                </div>
+
+                {!canEditTerms && (
+                  <p className="text-xs text-danger">
+                    You do not have permission to edit
+                    Terms & Conditions.
+                  </p>
+                )}
+
+                {bookingTerms.length === 0 && (
+                  <div className="rounded-xl border border-dashed border-line p-5 text-center">
+                    <p className="text-sm text-muted">
+                      No Terms & Conditions added.
+                    </p>
+                  </div>
+                )}
+
+                <div className="space-y-2 max-h-[350px] overflow-y-auto">
+                  {bookingTerms.map((term, index) => (
+                    <div
+                      key={index}
+                      className="flex items-start gap-2 rounded-xl border border-line p-3"
+                    >
+                      <span className="grid place-items-center size-7 shrink-0 rounded-lg bg-primary/10 text-primary text-xs font-bold">
+                        {index + 1}
+                      </span>
+
+                      <textarea
+                        rows={2}
+                        dir="auto"
+                        value={term}
+                        disabled={!canEditTerms || savingTerms}
+                        placeholder="Enter a term or condition..."
+                        className="input flex-1 min-w-0 resize-y text-sm"
+                        onChange={(e) =>
+                          editBookingTerm(index, e.target.value)
+                        }
+                      />
+
+                      {canEditTerms && (
+                        <button
+                          type="button"
+                          disabled={savingTerms}
+                          onClick={() => removeBookingTerm(index)}
+                          className="text-danger text-xs font-semibold p-1.5"
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                {canEditTerms && (
+                  <>
+                    <button
+                      type="button"
+                      disabled={savingTerms}
+                      onClick={addBookingTerm}
+                      className="btn btn-outline w-full"
+                    >
+                      <Plus size={16} />
+                      Add New Term
+                    </button>
+
+                    <div className="grid sm:grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        disabled={savingTerms || !termsChanged}
+                        onClick={discardBookingTerms}
+                        className="btn btn-neutral"
+                      >
+                        <RefreshCw size={16} />
+                        Discard Changes
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={savingTerms || !termsChanged}
+                        onClick={saveBookingTerms}
+                        className="btn btn-primary"
+                      >
+                        <Check size={16} />
+
+                        {savingTerms
+                          ? 'Saving...'
+                          : 'Save Terms'}
+                      </button>
+                    </div>
+                  </>
+                )}
+
+                {!termsChanged && (
+                  <div className="flex items-center gap-2 text-xs text-success">
+                    <CircleCheck size={15} />
+                    All Terms & Conditions are saved.
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </AppModal>
@@ -1601,7 +1893,7 @@ export default function NewBookingPage() {
             </p>
           </div>
         )}
-      </AppModal>
+      </AppModal>;
 
       {/* ========== BIOMETRIC SELECTION MODAL ========== */}
       <AppModal
@@ -1748,6 +2040,6 @@ export default function NewBookingPage() {
           )}
         </div>
       </AppModal>
-    </PermissionGuard>
+    </PermissionGuard >
   );
 }

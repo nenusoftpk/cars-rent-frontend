@@ -25,6 +25,9 @@ import {
   AlertCircle,
   RefreshCw,
   RotateCcw,
+  Plus,
+  Trash2,
+  FileText,
 } from "lucide-react";
 
 import PageHeader from "@/components/layout/PageHeader";
@@ -76,6 +79,7 @@ const TAB_ITEMS = [
   { value: "business", label: "Business" },
   { value: "receipt", label: "Receipt & Bill" },
   { value: "display", label: "Date & Time" },
+  { value: "terms", label: "Terms & Conditions" },
 ];
 
 const TAB_TITLES = {
@@ -84,6 +88,7 @@ const TAB_TITLES = {
   business: "Business Information",
   receipt: "Receipt & Billing Rules",
   display: "Date & Time Preferences",
+  terms: "Terms & Conditions",
 };
 
 // Only fields that exist in Setting.js / settingValidation.js (the schema rejects unknown keys).
@@ -1053,7 +1058,7 @@ function PreferencesTab({ tab, canEdit }) {
     if (!canEdit) return;
 
     const confirmed = window.confirm(
-      "Reset ALL application settings to defaults? Prefixes, receipt text and display preferences will go back to their original values."
+      "Reset general application settings to defaults? Prefixes, receipt text and display preferences will go back to their original values. Terms & Conditions will be kept."
     );
 
     if (!confirmed) return;
@@ -1334,7 +1339,7 @@ function PreferencesTab({ tab, canEdit }) {
                 <RotateCcw size={16} />
               )}
 
-              Reset All Settings
+              Reset General Settings
             </button>
 
             <SaveButton
@@ -1346,6 +1351,88 @@ function PreferencesTab({ tab, canEdit }) {
         )}
       </Form>
     </div>
+  );
+}
+
+// --------------------------------------------------
+// TERMS & CONDITIONS TAB
+// --------------------------------------------------
+
+function TermsTab({ canEdit }) {
+  const { data, isLoading, error, refetch } = useGetSettingsQuery();
+  const [updateSettings, { isLoading: isSaving }] = useUpdateSettingsMutation();
+  const response = unwrapData(data);
+  const settings = response?.settings ?? response;
+  const savedTerms = Array.isArray(settings.termsAndConditions)
+    ? settings.termsAndConditions : [];
+  const [draft, setDraft] = useState(null);
+  const terms = draft ?? savedTerms;
+  const offline = Boolean(data?._offline || data?._fromCache);
+  const disabled = !canEdit || isSaving || offline;
+  const dirty = JSON.stringify(terms) !== JSON.stringify(savedTerms);
+
+  const onSubmit = async (event) => {
+    event.preventDefault();
+    if (disabled || !dirty) return;
+    const payload = terms.map((term) => term.trim()).filter(Boolean);
+    try {
+      await updateSettings({ termsAndConditions: payload }).unwrap();
+      await refetch().unwrap();
+      setDraft(null);
+      toast.success("Terms & Conditions saved successfully.");
+    } catch (err) {
+      toast.error(errorMessage(err, "Unable to save or refresh Terms & Conditions."));
+    }
+  };
+
+  if (isLoading) return <LoadingSkeleton rows={4} cols={1} />;
+  if (error) return <NetworkError error={error} onRetry={refetch} />;
+
+  return (
+    <form onSubmit={onSubmit} className="max-w-4xl space-y-5">
+      <div className="flex items-start gap-3 rounded-xl border border-primary/20 bg-primary/5 p-4">
+        <FileText size={21} className="mt-0.5 shrink-0 text-primary" />
+        <div>
+          <h3 className="font-bold text-heading">Rental Terms & Conditions</h3>
+          <p className="mt-1 text-sm text-muted">
+            Add your business rental terms in English or Urdu. Saved terms apply to new bookings. Existing bookings keep their original terms.
+          </p>
+        </div>
+      </div>
+      {!canEdit && <AdminNotice />}
+      {offline && <p className="text-sm text-muted">You are viewing cached settings. Connect to the internet to edit terms.</p>}
+      <fieldset disabled={disabled} className="min-w-0 space-y-3">
+        {terms.length === 0 && <p className="rounded-xl border border-dashed border-line p-4 text-sm text-muted">No terms added yet.</p>}
+        {terms.map((term, index) => (
+          <div key={index} className="flex items-start gap-2 rounded-xl border border-line p-3 sm:gap-3">
+            <span className="pt-2 text-sm font-semibold text-muted">{index + 1}.</span>
+            <textarea
+              aria-label={`Term ${index + 1}`}
+              dir="auto"
+              rows={2}
+              value={term}
+              placeholder="Enter a rental term..."
+              className="input min-w-0 flex-1 resize-y"
+              onChange={(event) => setDraft(terms.map((value, i) => i === index ? event.target.value : value))}
+            />
+            <button type="button" aria-label={`Delete term ${index + 1}`} className="shrink-0 rounded-lg p-2 text-red-600 hover:bg-red-500/10" onClick={() => setDraft(terms.filter((_, i) => i !== index))}>
+              <Trash2 size={18} />
+            </button>
+          </div>
+        ))}
+        <button type="button" className="btn btn-neutral" onClick={() => setDraft([...terms, ""])}>
+          <Plus size={17} /> Add New Term
+        </button>
+      </fieldset>
+      {canEdit && (
+        <div className="flex flex-wrap justify-end gap-3 border-t border-line pt-5">
+          <button type="button" className="btn btn-neutral" disabled={disabled || !dirty} onClick={() => setDraft(null)}>
+            <RotateCcw size={16} /> Discard Changes
+          </button>
+          <SaveButton loading={isSaving} disabled={disabled || !dirty} label="Save Terms & Conditions" />
+        </div>
+      )}
+    </form>
   );
 }
 
@@ -1376,7 +1463,7 @@ export default function SettingsPage() {
   const availableTabs = TAB_ITEMS.filter(
     (item) =>
       canEditBusiness ||
-      !["business", "receipt", "display"].includes(
+      !["business", "receipt", "display", "terms"].includes(
         item.value
       )
   );
@@ -1423,6 +1510,10 @@ export default function SettingsPage() {
               <BusinessTab
                 canEdit={canEditBusiness}
               />
+            )}
+
+            {activeTab === "terms" && (
+              <TermsTab canEdit={canEditBusiness} />
             )}
 
             {["receipt", "display"].includes(

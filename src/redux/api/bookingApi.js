@@ -234,6 +234,9 @@ export function mapBooking(b) {
     pickupLocation: b.pickupLocation ?? "",
     returnLocation: b.returnLocation ?? "",
     instructions: b.instructions ?? b.specialInstructions ?? "",
+    termsAndConditions: Array.isArray(b.termsAndConditions)
+      ? b.termsAndConditions
+      : [],
 
     rateType: b.rateType ?? b.rentType ?? "daily",
     rate: b.rate ?? b.rentRate ?? 0,
@@ -712,12 +715,24 @@ export const bookingApi = baseApi.injectEndpoints({
       query: ({ id, ...body }) => ({
         url: `/bookings/${id}`,
         method: "PATCH",
-        body: mapBookingBody(body),
+
+        body: {
+          ...mapBookingBody(body),
+
+          // Booking-specific Terms & Conditions
+          ...(body.termsAndConditions !== undefined
+            ? {
+              termsAndConditions: body.termsAndConditions,
+            }
+            : {}),
+        },
       }),
+
       transformResponse: (res) => {
         const x = unwrap(res);
         return mapBooking(x?.booking ?? x);
       },
+
       invalidatesTags: BOOKING_TAGS,
     }),
 
