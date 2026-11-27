@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Eye, EyeOff, Monitor, Smartphone } from "lucide-react";
 
 import SmartImage from "@/components/common/SmartImage";
-
+import WhatsappFloating from "../common/WhatsappFloating";
 // ======================================================
 // ASSETS & LINKS
 // Change these when you add your final files.
@@ -275,6 +275,7 @@ export default function AuthLayout({
           )}
         </section>
       </div>
+      <WhatsappFloating/>
     </div>
   );
 }

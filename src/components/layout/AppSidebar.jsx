@@ -24,6 +24,8 @@ import {
   CreditCard,
   Users,
   Settings,
+  MessageCircle,
+  Headset,
 } from "lucide-react";
 
 import {
@@ -443,63 +445,92 @@ function NavList({
 // SIDEBAR FOOTER
 // ============================================================
 
+
+// ============================================================
+// ANIMATED HELP & SUPPORT SIDEBAR FOOTER
+// ============================================================
+
+
 function SidebarFooter({
   collapsed = false,
 }) {
-  const {
-    isAuthenticated,
-    user,
-    role,
-    isSuperAdmin,
-  } = useAuth();
+  const phone = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER?.replace(
+    /\D/g,
+    ""
+  );
 
-  if (!isAuthenticated) return null;
+  if (!phone) return null;
+
+  const whatsappHref = `https://wa.me/${phone}?text=${encodeURIComponent(
+    "Hello! I need help with the Rent a Car Management System."
+  )}`;
 
   return (
-    <div className="border-t border-white/10 px-3 py-3">
-      <div
+    <div className="border-t border-white/10 p-3">
+      <a
+        href={whatsappHref}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label="Help and Support on WhatsApp"
+        title={collapsed ? "Help & Support" : undefined}
         className={cn(
-          "flex items-center",
-          "rounded-xl bg-white/5",
-          "text-slate-200",
+          "group relative flex items-center overflow-hidden",
+          "rounded-xl border border-blue-400/20",
+          "bg-gradient-to-r from-[#123c75] to-[#0b254a]",
+          "shadow-lg shadow-black/20",
+          "transition-all duration-300",
+          "hover:-translate-y-0.5",
+          "hover:border-blue-300/50",
+          "hover:shadow-blue-500/20",
+          "focus-visible:outline-none focus-visible:ring-2",
+          "focus-visible:ring-blue-400",
           collapsed
             ? "justify-center p-3"
-            : "gap-3 p-3"
+            : "justify-between gap-3 px-3 py-3"
         )}
       >
-        <div
-          className={cn(
-            "flex h-9 w-9 shrink-0",
-            "items-center justify-center",
-            "rounded-lg bg-white/10"
-          )}
-        >
-          <ShieldCheck
-            size={18}
-            aria-hidden="true"
-          />
-        </div>
+        {/* Animated background glow */}
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute -right-8 -top-8 h-20 w-20 rounded-full bg-blue-400/10 blur-2xl transition-all duration-500 group-hover:bg-blue-400/30"
+        />
 
+        {/* Support text */}
         {!collapsed && (
-          <div className="min-w-0">
-            <p className="truncate text-sm font-medium">
-              {user?.name || getRoleLabel(role)}
-            </p>
-
-            <p className="truncate text-xs text-slate-400">
-              {getRoleLabel(role)}
-
-              {isSuperAdmin &&
-                !ENABLE_SUPER_ADMIN_UI
-                ? " - UI Pending"
-                : ""}
-            </p>
-          </div>
+          <span className="relative z-10 text-sm font-semibold tracking-wide text-white transition-colors duration-300 group-hover:text-blue-200">
+            Help & Support
+          </span>
         )}
-      </div>
+
+        {/* WhatsApp icon */}
+        <span className="relative flex h-10 w-10 shrink-0 items-center justify-center">
+          {/* Outer pulse rings */}
+          <span
+            aria-hidden="true"
+            className="absolute inset-0 animate-ping rounded-full bg-[#25D366]/25"
+          />
+
+          <span
+            aria-hidden="true"
+            className="absolute inset-0 rounded-full bg-[#25D366]/15 transition-transform duration-300 group-hover:scale-125"
+          />
+
+          {/* Original WhatsApp icon */}
+          <svg
+            viewBox="0 0 24 24"
+            fill="currentColor"
+            aria-hidden="true"
+            className="relative z-10 h-7 w-7 text-[#25D366] drop-shadow-[0_0_7px_rgba(37,211,102,0.45)] transition-all duration-300 group-hover:scale-110 group-hover:text-[#4cff91]"
+          >
+            <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.347-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.435 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z" />
+          </svg>
+        </span>
+      </a>
     </div>
   );
 }
+
+
 
 // ============================================================
 // MAIN SIDEBAR
